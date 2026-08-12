@@ -131,7 +131,14 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     let response: ApprovalResponse;
     const approvalService = this.tryApprovalService();
     if (approvalService === undefined) {
-      response = { decision: 'approved' };
+      // Fail closed. Reaching here means a policy decided this call needs
+      // confirmation, but no broker is bound to ask (an embedding host that
+      // never wired one up). Treating "nobody to ask" as consent would let
+      // every gated tool call through unreviewed.
+      response = {
+        decision: 'rejected',
+        feedback: 'No approval broker is available to confirm this tool call.',
+      };
     } else {
       this.eventBus.publish({ type: 'permission.approval.requested', ...approvalContext });
       try {

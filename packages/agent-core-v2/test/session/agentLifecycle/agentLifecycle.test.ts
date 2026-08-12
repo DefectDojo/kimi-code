@@ -22,6 +22,9 @@ import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeOps';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import '#/agent/permissionRules/permissionRulesService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -584,6 +587,32 @@ describe('AgentLifecycleService', () => {
 
     expect(permissionModeSetMode).toHaveBeenCalledOnce();
     expect(permissionModeSetMode).toHaveBeenCalledWith('auto');
+  });
+
+  it('seeds the agent with the permission rules from config', async () => {
+    // The rules Op is not persisted, so without this seeding a user's
+    // `[permission]` deny/allow/ask config would parse but never reach the
+    // policy chain.
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: string) =>
+        section === PERMISSION_SECTION
+          ? { rules: [{ decision: 'deny', scope: 'user', pattern: 'Bash' }] }
+          : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(handle.accessor.get(IAgentPermissionRulesService).rules).toEqual([
+      { decision: 'deny', scope: 'user', pattern: 'Bash' },
+    ]);
+  });
+
+  it('leaves the rules empty when config has no permission section', async () => {
+    const handle = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(handle.accessor.get(IAgentPermissionRulesService).rules).toEqual([]);
   });
 
   it('keeps the restored permission mode instead of overwriting it with the default', async () => {
