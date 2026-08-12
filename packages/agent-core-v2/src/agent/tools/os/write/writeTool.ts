@@ -32,6 +32,7 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
+  assertRealPathAccess,
   extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type WorkspaceConfig,
@@ -87,6 +88,11 @@ export class WriteTool implements IWriteTool {
   }
 
   private async execution(args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
+    // The path was canonicalized lexically; re-check it against what the
+    // symlinks actually resolve to before writing through them.
+    await assertRealPathAccess(safePath, args.path, this.workspaceConfig, this.fs, {
+      pathClass: this.env.pathClass,
+    });
     const parentError = await this.ensureParentDirectory(safePath);
     if (parentError !== undefined) {
       return { isError: true, output: parentError };
