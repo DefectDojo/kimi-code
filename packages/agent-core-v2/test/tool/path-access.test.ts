@@ -64,6 +64,46 @@ describe('isSensitiveFile', () => {
       expect(isSensitiveFile(path), path).toBe(false);
     }
   });
+
+  it('treats credential directories as sensitive whatever the file is called', () => {
+    for (const path of [
+      '/home/u/.ssh/deploy_key',
+      '/home/u/.ssh/work-key',
+      '/home/u/.gnupg/secring.gpg',
+      '/home/u/.aws/sso-cache.json',
+      '/home/u/.azure/accessTokens.json',
+      '/home/u/.kube/config',
+      '/home/u/.config/gcloud/application_default_credentials.json',
+      '/home/u/.kimi-code/credentials/kimi.json',
+    ]) {
+      expect(isSensitiveFile(path), path).toBe(true);
+    }
+  });
+
+  it('treats well-known credential files as sensitive', () => {
+    for (const path of [
+      '/home/u/.git-credentials',
+      '/home/u/.netrc',
+      '/home/u/.npmrc',
+      '/home/u/.pypirc',
+      '/home/u/.docker/config.json',
+      '/home/u/.kimi-code/config.toml',
+      '/home/u/kubeconfig',
+    ]) {
+      expect(isSensitiveFile(path), path).toBe(true);
+    }
+  });
+
+  it('leaves non-secret files inside credential directories readable', () => {
+    for (const path of [
+      '/home/u/.ssh/known_hosts',
+      '/home/u/.ssh/config',
+      '/home/u/.ssh/deploy_key.pub',
+      '/home/u/.aws/config',
+    ]) {
+      expect(isSensitiveFile(path), path).toBe(false);
+    }
+  });
 });
 
 describe('extendWorkspaceWithSkillRoots', () => {
