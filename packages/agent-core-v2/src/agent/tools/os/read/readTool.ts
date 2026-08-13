@@ -35,6 +35,7 @@ import {
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
   extendWorkspaceWithSkillRoots,
+  assertRealPathAccess,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
@@ -271,6 +272,11 @@ export class ReadTool implements IReadTool {
   }
 
   private async execution(args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
+    // The path was canonicalized lexically; re-check it against what the
+    // symlinks actually resolve to before reading through them.
+    await assertRealPathAccess(safePath, args.path, this.workspaceConfig, this.fs, {
+      pathClass: this.env.pathClass,
+    });
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
       try {

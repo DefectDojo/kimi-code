@@ -42,15 +42,24 @@ export class AgentPermissionPolicyService
     @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
+    // Order matters: the first policy to return a result wins.
+    //
+    // `AutoModeApprove` sits after the two content-sensitive asks (secrets on
+    // disk, and the .git control directory) rather than ahead of them, so
+    // enabling auto mode speeds up ordinary work without also silently
+    // waiving the checks that exist for the highest-consequence paths.
+    // Everything else keeps its previous relative order: an explicit prior
+    // approval (`SessionApprovalHistory`) or a user `allow` rule still wins,
+    // so this does not re-prompt for something already approved.
     this.policies = [
       this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
-      this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
       this.instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAllowPermissionPolicyService),
       this.instantiation.createInstance(SensitiveFileAccessAskPermissionPolicyService),
       this.instantiation.createInstance(GitControlPathAccessAskPermissionPolicyService),
+      this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
       this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
       this.instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
       this.instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService),

@@ -10,8 +10,9 @@
  * fails the background install instead of wedging it.
  */
 
+import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -91,9 +92,11 @@ export async function downloadToFile(
   destPath: string,
   onPercent?: (percent: number) => void,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
-  options: { idleTimeoutMs?: number } = {},
+  options: { idleTimeoutMs?: number; expectedSha256?: string } = {},
 ): Promise<number> {
   const idleTimeoutMs = options.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS;
+  const expectedSha256 = options.expectedSha256?.trim().toLowerCase();
+  const digest = expectedSha256 === undefined ? undefined : createHash('sha256');
   const headerController = new AbortController();
   const headerTimer = setTimeout(() => {
     headerController.abort();
@@ -122,6 +125,7 @@ export async function downloadToFile(
   const meter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       armIdleWatchdog();
+      digest?.update(chunk);
       received += chunk.length;
       if (total > 0 && onPercent !== undefined) {
         onPercent(Math.min(99, Math.floor((received / total) * 100)));
@@ -141,6 +145,17 @@ export async function downloadToFile(
     await pipeline(Readable.fromWeb(resp.body), meter, createWriteStream(destPath));
   } finally {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
+  }
+  if (expectedSha256 !== undefined && digest !== undefined) {
+    const actual = digest.digest('hex');
+    if (actual !== expectedSha256) {
+      // Never leave an unverified artifact on disk where a later step could
+      // pick it up and execute it.
+      await rm(destPath, { force: true }).catch(() => {});
+      throw new Error(
+        `Checksum mismatch for ${url}: expected sha256 ${expectedSha256}, got ${actual}`,
+      );
+    }
   }
   onPercent?.(100);
   return received;

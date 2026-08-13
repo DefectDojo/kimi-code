@@ -241,13 +241,22 @@ describe('AgentToolApprovalService', () => {
   });
 
   describe('requestToolApproval', () => {
-    it('auto-approves when no approval broker is registered', async () => {
+    it('fails closed when no approval broker is registered', async () => {
+      // A policy already decided this call needs confirmation. With no broker
+      // to ask, the call must be blocked rather than treated as approved.
       const events = subscribeApprovalEvents();
       const svc = make();
 
       await expect(
         svc.requestToolApproval(makeContext('Bash', { command: 'printf hi' }), ask(), 'fallback-ask'),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({
+        veto: {
+          output:
+            'Tool "Bash" was not run because the user rejected the approval request. ' +
+            'Reason: No approval broker is available to confirm this tool call.',
+          isError: true,
+        },
+      });
 
       expect(events.requested).not.toHaveBeenCalled();
       expect(events.resolved).not.toHaveBeenCalled();
@@ -255,14 +264,14 @@ describe('AgentToolApprovalService', () => {
       expect(recorded[0]).toMatchObject({
         toolName: 'Bash',
         sessionApprovalRule: undefined,
-        result: { decision: 'approved' },
+        result: { decision: 'rejected' },
       });
       expect(records).toContainEqual({
         event: 'permission_approval_result',
         properties: expect.objectContaining({
           policy_name: 'fallback-ask',
           tool_name: 'Bash',
-          result: 'approved',
+          result: 'rejected',
           session_cache_written: false,
         }),
       });

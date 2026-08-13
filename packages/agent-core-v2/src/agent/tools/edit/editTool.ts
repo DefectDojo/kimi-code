@@ -21,6 +21,7 @@
 
 import {
   extendWorkspaceWithSkillRoots,
+  assertRealPathAccess,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
@@ -28,6 +29,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -48,6 +50,7 @@ export class EditTool implements IEditTool {
 
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
@@ -92,6 +95,11 @@ export class EditTool implements IEditTool {
   }
 
   private async execution(args: EditInput, safePath: string): Promise<ExecutableToolResult> {
+    // The path was canonicalized lexically; re-check it against what the
+    // symlinks actually resolve to before editing through them.
+    await assertRealPathAccess(safePath, args.path, this.workspaceConfig, this.fs, {
+      pathClass: this.env.pathClass,
+    });
     if (args.old_string === args.new_string) {
       return {
         isError: true,
