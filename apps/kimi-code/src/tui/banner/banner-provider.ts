@@ -312,6 +312,14 @@ export function selectDisplayableBanner({
   return pickRandomCandidate(candidates, random);
 }
 
+/**
+ * `KIMI_CODE_NO_TIPS` disables the startup tips fetch. Same truthy values as
+ * the other kill switches (`1` / `true` / `yes` / `on`).
+ */
+export function isTipsBannerDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((env['KIMI_CODE_NO_TIPS'] ?? '').trim().toLowerCase());
+}
+
 export class BannerProvider {
   constructor(
     private readonly clientVersion: string,
@@ -322,6 +330,9 @@ export class BannerProvider {
     fetchImpl: typeof fetch = fetch,
     options: BannerProviderLoadOptions = {},
   ): Promise<BannerState | null> {
+    // The banner is the one startup fetch with no way to turn it off, which
+    // makes an otherwise offline-configured install still beacon on every run.
+    if (isTipsBannerDisabled()) return null;
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => {

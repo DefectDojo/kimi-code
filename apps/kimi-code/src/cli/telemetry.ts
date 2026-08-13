@@ -51,7 +51,8 @@ export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): 
   initializeTelemetry({
     homeDir: options.harness.homeDir,
     deviceId: options.bootstrap.deviceId,
-    enabled: options.config.telemetry !== false,
+    // Opt-in in this fork: telemetry only runs when the user turns it on.
+    enabled: options.config.telemetry === true,
     appName: CLI_USER_AGENT_PRODUCT,
     version: options.version,
     uiMode: options.uiMode,
@@ -100,7 +101,8 @@ export function initializeServerTelemetry(
   initializeTelemetry({
     homeDir: bootstrap.homeDir,
     deviceId: bootstrap.deviceId,
-    enabled: config.telemetry !== false,
+    // Opt-in in this fork: telemetry only runs when the user turns it on.
+    enabled: config.telemetry === true,
     appName: CLI_USER_AGENT_PRODUCT,
     version: options.version,
     uiMode: WEB_UI_MODE,

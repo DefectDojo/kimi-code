@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   selectBannerState,
@@ -6,6 +6,7 @@ import {
   shouldDisplayBanner,
 } from '#/tui/banner/banner-provider';
 import type { BannerState } from '#/tui/types';
+import { BannerProvider } from '#/tui/banner/banner-provider';
 
 describe('selectBannerState', () => {
   const now = new Date('2026-06-15T12:00:00+08:00');
@@ -677,5 +678,20 @@ describe('selectDisplayableBanner', () => {
     });
 
     expect(result).toMatchObject({ key: 'fallback-always', display: 'always' });
+  });
+});
+
+describe('tips banner kill switch', () => {
+  it('skips the fetch entirely when KIMI_CODE_NO_TIPS is set', async () => {
+    vi.stubEnv('KIMI_CODE_NO_TIPS', '1');
+    try {
+      const fetchImpl = vi.fn<typeof fetch>();
+      const provider = new BannerProvider('1.0.0');
+
+      await expect(provider.load(fetchImpl)).resolves.toBeNull();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
