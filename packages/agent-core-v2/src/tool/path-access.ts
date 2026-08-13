@@ -380,6 +380,103 @@ export function resolvePathAccessPath(
   }).path;
 }
 
+export interface PathRealpathResolver {
+  realpath(path: string): Promise<string>;
+}
+
+export interface AssertRealPathOptions {
+  readonly pathClass?: PathClass | undefined;
+  readonly checkSensitive?: boolean | undefined;
+}
+
+/**
+ * Resolve the longest existing prefix of `abs` through symlinks and re-attach
+ * the not-yet-existing tail. A write to a new file still gets its parent
+ * directory resolved, which is where a redirect would sit.
+ */
+async function realpathExistingPrefix(abs: string, fs: PathRealpathResolver): Promise<string> {
+  const tail: string[] = [];
+  let current = abs;
+  for (let i = 0; i < 256; i++) {
+    try {
+      const real = await fs.realpath(current);
+      return tail.length === 0 ? real : pathe.join(real, ...tail.toReversed());
+    } catch {
+      const parent = pathe.dirname(current);
+      if (parent === current) return abs;
+      tail.push(pathe.basename(current));
+      current = parent;
+    }
+  }
+  return abs;
+}
+
+async function realWorkspaceRoots(
+  config: WorkspaceConfig,
+  fs: PathRealpathResolver,
+): Promise<readonly string[]> {
+  const roots: string[] = [];
+  for (const dir of [config.workspaceDir, ...config.additionalDirs]) {
+    try {
+      roots.push(await fs.realpath(dir));
+    } catch {
+      roots.push(dir);
+    }
+  }
+  return roots;
+}
+
+/**
+ * Symlink-aware re-check, run at execution time.
+ *
+ * `resolvePathAccess` canonicalizes lexically, so a symlink that sits inside
+ * the workspace still reads as inside it — while the OS follows the link at
+ * open time. This re-runs the two checks against the resolved target:
+ *
+ *   - a path that looked inside the workspace must still be inside it once
+ *     symlinks are resolved (a path the caller already gave as outside is
+ *     governed by the approval layer, so it is left alone here);
+ *   - the resolved target must not be a sensitive file, even when the link
+ *     itself has an innocuous name.
+ *
+ * Costs nothing on the common path: when nothing along the path is a symlink
+ * the resolved path equals the canonical one and this returns immediately.
+ */
+export async function assertRealPathAccess(
+  canonicalPath: string,
+  rawPath: string,
+  config: WorkspaceConfig,
+  fs: PathRealpathResolver,
+  options: AssertRealPathOptions = {},
+): Promise<void> {
+  const pathClass = options.pathClass ?? DEFAULT_PATH_CLASS;
+  const checkSensitive = options.checkSensitive ?? DEFAULT_WORKSPACE_ACCESS_POLICY.checkSensitive;
+  const realPath = await realpathExistingPrefix(canonicalPath, fs);
+  if (realPath === canonicalPath) return;
+
+  if (checkSensitive && isSensitiveFile(realPath)) {
+    throw new PathSecurityError(
+      'PATH_SENSITIVE',
+      rawPath,
+      realPath,
+      `"${rawPath}" resolves through a symlink to a sensitive file ` +
+        `(env / credential / SSH key). Access is blocked to protect secrets.`,
+    );
+  }
+
+  if (!isWithinWorkspace(canonicalPath, config, pathClass)) return;
+
+  const roots = await realWorkspaceRoots(config, fs);
+  if (roots.some((root) => isWithinDirectory(realPath, root, pathClass))) return;
+
+  throw new PathSecurityError(
+    'PATH_OUTSIDE_WORKSPACE',
+    rawPath,
+    realPath,
+    `"${rawPath}" resolves through a symlink to "${realPath}", which is outside the workspace.`,
+  );
+}
+
 export function assertPathAllowed(
   path: string,
   cwd: string,

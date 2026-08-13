@@ -1,6 +1,14 @@
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import nodePath from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-import { extendWorkspaceWithSkillRoots, isSensitiveFile } from '#/tool/path-access';
+import {
+  assertRealPathAccess,
+  extendWorkspaceWithSkillRoots,
+  isSensitiveFile,
+} from '#/tool/path-access';
 
 describe('isSensitiveFile', () => {
   it('flags base .env files in any directory', () => {
@@ -140,5 +148,143 @@ describe('extendWorkspaceWithSkillRoots', () => {
         'win32',
       ).additionalDirs,
     ).toEqual([]);
+  });
+});
+
+describe('assertRealPathAccess', () => {
+  const workspace = { workspaceDir: '/ws', additionalDirs: [] as string[] };
+
+  /**
+   * Resolver where `links` maps a path to what it really resolves to, and
+   * `missing` paths reject the way `realpath` does for a path that does not
+   * exist yet (which is what makes the guard walk up to the parent).
+   */
+  function resolver(
+    links: Record<string, string>,
+    missing: readonly string[] = [],
+  ): { realpath: (p: string) => Promise<string> } {
+    return {
+      realpath: (p: string) => {
+        if (missing.includes(p)) return Promise.reject(new Error(`ENOENT: ${p}`));
+        for (const [from, to] of Object.entries(links)) {
+          if (p === from) return Promise.resolve(to);
+        }
+        return Promise.resolve(p);
+      },
+    };
+  }
+
+  it('allows a path that resolves to itself', async () => {
+    await expect(
+      assertRealPathAccess('/ws/src/a.ts', 'src/a.ts', workspace, resolver({}), {
+        pathClass: 'posix',
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects an in-workspace path that resolves outside the workspace', async () => {
+    // scripts/deploy.sh -> /home/u/.zshrc
+    await expect(
+      assertRealPathAccess(
+        '/ws/scripts/deploy.sh',
+        'scripts/deploy.sh',
+        workspace,
+        resolver({ '/ws/scripts/deploy.sh': '/home/u/.zshrc' }),
+        { pathClass: 'posix' },
+      ),
+    ).rejects.toThrow(/outside the workspace/);
+  });
+
+  it('rejects a link whose target is sensitive even when the link name is innocuous', async () => {
+    // notes.md -> /home/u/.aws/credentials
+    await expect(
+      assertRealPathAccess(
+        '/ws/notes.md',
+        'notes.md',
+        workspace,
+        resolver({ '/ws/notes.md': '/home/u/.aws/credentials' }),
+        { pathClass: 'posix' },
+      ),
+    ).rejects.toThrow(/sensitive file/);
+  });
+
+  it('resolves the parent directory for a file that does not exist yet', async () => {
+    // scripts -> /etc, so a new file under it lands outside the workspace.
+    await expect(
+      assertRealPathAccess(
+        '/ws/scripts/new.sh',
+        'scripts/new.sh',
+        workspace,
+        resolver({ '/ws/scripts': '/etc' }, ['/ws/scripts/new.sh']),
+        { pathClass: 'posix' },
+      ),
+    ).rejects.toThrow(/outside the workspace/);
+  });
+
+  it('allows a symlink that stays inside the workspace', async () => {
+    await expect(
+      assertRealPathAccess(
+        '/ws/link.ts',
+        'link.ts',
+        workspace,
+        resolver({ '/ws/link.ts': '/ws/real.ts' }),
+        { pathClass: 'posix' },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('honours additionalDirs as legitimate roots', async () => {
+    await expect(
+      assertRealPathAccess(
+        '/ws/skill',
+        'skill',
+        { workspaceDir: '/ws', additionalDirs: ['/opt/skills'] },
+        resolver({ '/ws/skill': '/opt/skills/a' }),
+        { pathClass: 'posix' },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('leaves an explicitly-outside path to the approval layer', async () => {
+    // Already outside the workspace lexically: not this guard's call.
+    await expect(
+      assertRealPathAccess(
+        '/tmp/scratch',
+        '/tmp/scratch',
+        workspace,
+        resolver({ '/tmp/scratch': '/tmp/elsewhere' }),
+        { pathClass: 'posix' },
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('assertRealPathAccess against a real filesystem', () => {
+  it('blocks a real in-workspace symlink that points outside the workspace', async () => {
+    const hostFs = { realpath: (p: string) => realpath(p) };
+    const root = await realpath(await mkdtemp(nodePath.join(tmpdir(), 'kimi-symlink-')));
+    try {
+      const ws = nodePath.join(root, 'repo');
+      const outside = nodePath.join(root, 'home');
+      await mkdir(nodePath.join(ws, 'scripts'), { recursive: true });
+      await mkdir(outside, { recursive: true });
+      const target = nodePath.join(outside, '.zshrc');
+      await writeFile(target, 'echo hi\n');
+      const link = nodePath.join(ws, 'scripts', 'deploy.sh');
+      await symlink(target, link);
+      const workspace = { workspaceDir: ws, additionalDirs: [] as string[] };
+
+      await expect(
+        assertRealPathAccess(link, 'scripts/deploy.sh', workspace, hostFs, { pathClass: 'posix' }),
+      ).rejects.toThrow(/outside the workspace/);
+
+      const real = nodePath.join(ws, 'scripts', 'ok.sh');
+      await writeFile(real, '#!/bin/sh\n');
+      await expect(
+        assertRealPathAccess(real, 'scripts/ok.sh', workspace, hostFs, { pathClass: 'posix' }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
