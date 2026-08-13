@@ -54,7 +54,7 @@ import {
 } from '#/tool/result-builder';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
+import { literalRulePattern, matchesBashCommandRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
@@ -183,7 +183,8 @@ export class BashTool implements IBashTool {
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
+      matchesRule: (ruleArgs, options) =>
+        matchesBashCommandRuleSubject(ruleArgs, args.command, options),
       execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
         this.execution(args, signal, onUpdate, onForegroundTaskStart),
     };
