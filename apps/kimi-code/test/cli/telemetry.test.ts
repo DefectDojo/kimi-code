@@ -104,7 +104,27 @@ describe('initializeServerTelemetry', () => {
     );
   });
 
-  it('degrades to enabled with no model when config is unreadable', async () => {
+  it('stays disabled when the config does not opt in', async () => {
+    mocks.loadRuntimeConfigSafe.mockReturnValue({ config: {}, fileError: undefined });
+    const { initializeServerTelemetry } = await import('#/cli/telemetry');
+    initializeServerTelemetry({ version: '1.2.3' });
+
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false }),
+    );
+  });
+
+  it('enables only when the config opts in', async () => {
+    mocks.loadRuntimeConfigSafe.mockReturnValue({ config: { telemetry: true }, fileError: undefined });
+    const { initializeServerTelemetry } = await import('#/cli/telemetry');
+    initializeServerTelemetry({ version: '1.2.3' });
+
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+    );
+  });
+
+  it('degrades to disabled with no model when config is unreadable', async () => {
     mocks.loadRuntimeConfigSafe.mockReturnValue({
       config: {},
       fileError: new Error('bad toml'),
@@ -112,8 +132,9 @@ describe('initializeServerTelemetry', () => {
     const { initializeServerTelemetry } = await import('#/cli/telemetry');
     initializeServerTelemetry({ version: '1.2.3' });
 
+    // Telemetry is opt-in, so a config we could not read is not consent.
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: true, model: undefined }),
+      expect.objectContaining({ enabled: false, model: undefined }),
     );
   });
 });
