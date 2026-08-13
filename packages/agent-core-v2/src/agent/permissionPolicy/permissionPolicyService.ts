@@ -15,6 +15,7 @@ import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/perm
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import { FallbackAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/fallback-ask';
 import { GitControlPathAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/git-control-path-access-ask';
+import { ExecutionTriggerWriteAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/execution-trigger-write-ask';
 import { GitCwdWriteApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/git-cwd-write-approve';
 import { SensitiveFileAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/sensitive-file-access-ask';
 import { SessionApprovalHistoryPermissionPolicyService } from '#/agent/permissionPolicy/policies/session-approval-history';
@@ -44,8 +45,9 @@ export class AgentPermissionPolicyService
     super();
     // Order matters: the first policy to return a result wins.
     //
-    // `AutoModeApprove` sits after the two content-sensitive asks (secrets on
-    // disk, and the .git control directory) rather than ahead of them, so
+    // `AutoModeApprove` sits after the content-sensitive asks (secrets on
+    // disk, the .git control directory, and files a later command executes)
+    // rather than ahead of them, so
     // enabling auto mode speeds up ordinary work without also silently
     // waiving the checks that exist for the highest-consequence paths.
     // Everything else keeps its previous relative order: an explicit prior
@@ -59,6 +61,7 @@ export class AgentPermissionPolicyService
       this.instantiation.createInstance(UserConfiguredAllowPermissionPolicyService),
       this.instantiation.createInstance(SensitiveFileAccessAskPermissionPolicyService),
       this.instantiation.createInstance(GitControlPathAccessAskPermissionPolicyService),
+      this.instantiation.createInstance(ExecutionTriggerWriteAskPermissionPolicyService),
       this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
       this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
       this.instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
