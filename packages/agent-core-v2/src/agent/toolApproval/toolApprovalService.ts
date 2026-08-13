@@ -129,15 +129,27 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
-    const approvalService = this.tryApprovalService();
+    // Auto mode is documented as "fully autonomous, the agent will not ask
+    // questions", and headless runs (`kimi -p`) turn it on for the whole
+    // session. Nobody is there to answer, so going to the broker would block
+    // until the process is killed. Treat it like a missing broker and refuse.
+    // Mirrors `auto-mode-ask-user-question-deny`, which solves the same
+    // problem for AskUserQuestion.
+    const unattended = this.modeService.mode === 'auto';
+    const approvalService = unattended ? undefined : this.tryApprovalService();
     if (approvalService === undefined) {
-      // Fail closed. Reaching here means a policy decided this call needs
-      // confirmation, but no broker is bound to ask (an embedding host that
-      // never wired one up). Treating "nobody to ask" as consent would let
-      // every gated tool call through unreviewed.
+      // Fail closed. A policy decided this call needs confirmation and there
+      // is no one to confirm it — either the session is unattended, or no
+      // broker was bound (an embedding host that never wired one up).
+      // Treating "nobody to ask" as consent would let every gated tool call
+      // through unreviewed.
       response = {
         decision: 'rejected',
-        feedback: 'No approval broker is available to confirm this tool call.',
+        feedback: unattended
+          ? `"${name}" needs approval and this session is running unattended (auto mode). ` +
+            `Allow it explicitly with a [permission] allow rule in config.toml, ` +
+            `or run interactively so the request can be answered.`
+          : 'No approval broker is available to confirm this tool call.',
       };
     } else {
       this.eventBus.publish({ type: 'permission.approval.requested', ...approvalContext });
