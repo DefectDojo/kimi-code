@@ -480,9 +480,10 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
         }
         await stopOldProcesses();
         await moveAppIntoPlace(path.join(unzipDir, APP_BUNDLE));
-        await runCommand(ctx.hostProcess, 'xattr', ['-dr', 'com.apple.quarantine', appPath], {
-          timeout: commandTimeoutMs,
-        });
+        // The quarantine attribute is deliberately left in place: this bundle
+        // is fetched over the network and is not verified against a published
+        // checksum or signature here, so Gatekeeper stays the backstop and the
+        // user gets its prompt on first launch.
       } finally {
         await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
       }
