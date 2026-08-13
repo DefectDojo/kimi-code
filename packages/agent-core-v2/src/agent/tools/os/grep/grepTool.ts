@@ -50,6 +50,7 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   extendWorkspaceWithSkillRoots,
+  assertRealPathAccess,
   resolvePathAccessPath,
   type PathClass,
   isSensitiveFile,
@@ -147,6 +148,13 @@ export class GrepTool implements IGrepTool {
     signal: AbortSignal,
     searchPaths: string[],
   ): Promise<ExecutableToolResult> {
+    // Search roots were canonicalized lexically; re-check them against what
+    // the symlinks actually resolve to before walking them.
+    for (const root of searchPaths) {
+      await assertRealPathAccess(root, args.path ?? root, this.workspace, this.fs, {
+        pathClass: this.env.pathClass,
+      });
+    }
     if (signal.aborted) {
       return { isError: true, output: 'Aborted before search started' };
     }

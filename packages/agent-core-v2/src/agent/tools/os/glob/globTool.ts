@@ -84,6 +84,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import {
   extendWorkspaceWithSkillRoots,
   isWithinDirectory,
+  assertRealPathAccess,
   resolvePathAccessPath,
   type PathClass,
   isSensitiveFile,
@@ -185,6 +186,13 @@ export class GlobTool implements IGlobTool {
     signal: AbortSignal,
     searchRoots: readonly string[],
   ): Promise<ExecutableToolResult> {
+    // Search roots were canonicalized lexically; re-check them against what
+    // the symlinks actually resolve to before walking them.
+    for (const root of searchRoots) {
+      await assertRealPathAccess(root, args.path ?? root, this.workspaceConfig, this.fs, {
+        pathClass: this.env.pathClass,
+      });
+    }
     const searchRoot = searchRoots[0] ?? this.workspaceConfig.workspaceDir;
 
     try {
