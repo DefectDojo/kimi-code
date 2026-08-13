@@ -2932,7 +2932,14 @@ describe('Agent tools', () => {
       );
       profile = ctx.get(IAgentProfileService);
       profile.update({ activeToolNames: ['Bash'] });
+      // Auto mode no longer blanket-approves Bash; these hook-flow tests are
+      // about hook ordering, so opt in explicitly rather than gate on approval.
+      vi.stubEnv('KIMI_CODE_AUTO_APPROVE_BASH', '1');
       await ctx.rpc.setPermission({ mode: 'auto' });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
     });
 
     it('runs PreToolUse before successful tools and emits PostToolUse with output', async () => {
@@ -2982,7 +2989,14 @@ describe('Agent tools', () => {
       );
       profile = ctx.get(IAgentProfileService);
       profile.update({ activeToolNames: ['Bash'] });
+      // Auto mode no longer blanket-approves Bash; these hook-flow tests are
+      // about hook ordering, so opt in explicitly rather than gate on approval.
+      vi.stubEnv('KIMI_CODE_AUTO_APPROVE_BASH', '1');
       await ctx.rpc.setPermission({ mode: 'auto' });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
     });
 
     it('emits PostToolUseFailure with payload when a builtin tool execution fails', async () => {

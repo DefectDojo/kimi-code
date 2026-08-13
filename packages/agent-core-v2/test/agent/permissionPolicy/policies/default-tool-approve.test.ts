@@ -50,7 +50,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['TaskOutput', { task_id: 'task_1' }],
     ['CronList', {}],
     ['WebSearch', { query: 'kimi code' }],
-    ['FetchURL', { url: 'https://example.com' }],
     ['Agent', { prompt: 'review this' }],
     [
       'AgentSwarm',
@@ -83,5 +82,11 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     expect(
       policy.evaluate(policyContext(toolName, args)),
     ).toBeUndefined();
+  });
+
+  it('does not approve FetchURL', () => {
+    // FetchURL sends caller-chosen bytes to a caller-chosen host, so it is the
+    // sink half of an exfiltration pair and has to go through approval.
+    expect(policy.evaluate(policyContext('FetchURL', { url: 'https://example.com' }))).toBeUndefined();
   });
 });
