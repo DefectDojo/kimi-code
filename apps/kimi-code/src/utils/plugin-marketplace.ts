@@ -182,12 +182,62 @@ export function parsePluginMarketplace(raw: string, location: MarketplaceLocatio
   };
 }
 
+/**
+ * Hosts the catalog may be fetched from over the network.
+ *
+ * The catalog decides which plugins are offered and where their archives come
+ * from, and an installed plugin can declare an `mcpServers` command that gets
+ * spawned — so whoever serves this file chooses code that runs on the machine.
+ * Anything beyond these hosts has to be named deliberately through
+ * `KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS` (comma-separated), which keeps a
+ * self-hosted internal catalog possible without leaving the default open.
+ */
+const DEFAULT_MARKETPLACE_HOSTS = ['code.kimi.com', 'cdn.kimi.com'];
+const MARKETPLACE_ALLOWED_HOSTS_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS';
+
+function allowedMarketplaceHosts(env: NodeJS.ProcessEnv = process.env): readonly string[] {
+  const extra = (env[MARKETPLACE_ALLOWED_HOSTS_ENV] ?? '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter((host) => host.length > 0);
+  return [...DEFAULT_MARKETPLACE_HOSTS, ...extra];
+}
+
+const LOOPBACK_MARKETPLACE_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+function assertAllowedMarketplaceUrl(raw: string): void {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Plugin marketplace URL is not a valid URL: ${raw}`);
+  }
+  // A catalog served from this machine has no network path to tamper with.
+  if (LOOPBACK_MARKETPLACE_HOSTS.has(url.hostname.toLowerCase())) return;
+  if (url.protocol !== 'https:') {
+    throw new Error(
+      `Plugin marketplace must be served over https (got "${url.protocol}//"). ` +
+        `The catalog selects code that will run locally, so it is not fetched over plaintext.`,
+    );
+  }
+  const host = url.hostname.toLowerCase();
+  const allowed = allowedMarketplaceHosts();
+  if (!allowed.includes(host)) {
+    throw new Error(
+      `Plugin marketplace host "${host}" is not allowed. ` +
+        `Allowed: ${allowed.join(', ')}. ` +
+        `Add it to ${MARKETPLACE_ALLOWED_HOSTS_ENV} to use a self-hosted catalog.`,
+    );
+  }
+}
+
 function resolveMarketplaceLocation(source: string, workDir: string): MarketplaceLocation {
   const trimmed = source.trim();
   if (trimmed.length === 0) {
     throw new Error(`${KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV} cannot be empty.`);
   }
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    assertAllowedMarketplaceUrl(trimmed);
     return { raw: trimmed, kind: 'remote', resolved: trimmed };
   }
   if (trimmed.startsWith('file://')) {

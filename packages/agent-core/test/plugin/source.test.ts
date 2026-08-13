@@ -8,9 +8,15 @@ describe('resolveInstallSource', () => {
     expect(result).toEqual({ kind: 'zip-url', path: 'https://example.com/plugin.zip' });
   });
 
-  it('recognizes http:// as zip-url', () => {
-    const result = resolveInstallSource('http://example.com/plugin.zip');
-    expect(result).toEqual({ kind: 'zip-url', path: 'http://example.com/plugin.zip' });
+  it('rejects plaintext http:// for a remote plugin archive', () => {
+    // A plugin archive can ship a spawnable mcpServers command, so plaintext
+    // delivery from a remote host is refused.
+    expect(() => resolveInstallSource('http://example.com/plugin.zip')).toThrow(/must use https/);
+  });
+
+  it('still allows http:// to loopback (local test/dev servers)', () => {
+    const url = 'http://127.0.0.1:8080/plugin.zip';
+    expect(resolveInstallSource(url)).toEqual({ kind: 'zip-url', path: url });
   });
 
   it('recognizes absolute path as local-path', () => {
@@ -169,10 +175,9 @@ describe('resolveInstallSource', () => {
       expect(result).toEqual({ kind: 'zip-url', path: url });
     });
 
-    it('treats http:// (non-https) github URL as plain zip-url', () => {
+    it('rejects a http:// github URL rather than treating it as a zip-url', () => {
       const url = 'http://github.com/wbxl2000/superpowers';
-      const result = resolveInstallSource(url);
-      expect(result).toEqual({ kind: 'zip-url', path: url });
+      expect(() => resolveInstallSource(url)).toThrow(/must use https/);
     });
 
     it('percent-decodes %23 in /releases/tag/ so storage is human-readable', () => {
