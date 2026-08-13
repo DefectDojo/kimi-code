@@ -81,7 +81,14 @@ export interface RunnableToolExecution {
   readonly description?: string;
   readonly stopBatchAfterThis?: boolean | undefined;
   readonly approvalRule: string;
-  readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
+  /**
+   * `options.permissive` is true when the rule being tested would GRANT access
+   * (an `allow` rule). A tool may hold a permissive match to a higher standard
+   * than a deny match without weakening deny.
+   */
+  readonly matchesRule?:
+    | ((ruleArgs: string, options?: { readonly permissive?: boolean }) => boolean)
+    | undefined;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
 }
 
