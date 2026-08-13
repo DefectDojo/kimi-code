@@ -354,6 +354,62 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       vi.unstubAllEnvs();
     }  });
 
+  it('asks before writing a file a later command executes', async () => {
+    // These are approved-by-default in-workspace writes today; nothing runs at
+    // write time, and then the next install/test/CI run executes them.
+    for (const rel of [
+      'package.json',
+      'Makefile',
+      '.github/workflows/ci.yml',
+      'conftest.py',
+      '.pre-commit-config.yaml',
+    ]) {
+      await expect(evaluate({
+        toolName: 'Write',
+        args: { path: rel, content: 'x' },
+        accesses: ToolAccesses.writeFile(join(workspaceDir, rel)),
+      }), rel).resolves.toMatchObject({
+        policyName: 'execution-trigger-write-ask',
+        result: { kind: 'ask' },
+      });
+    }
+  });
+
+  it('still asks for those files in auto mode', async () => {
+    mode = 'auto';
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'package.json', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'package.json')),
+    })).resolves.toMatchObject({
+      policyName: 'execution-trigger-write-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('leaves ordinary source writes on the fast path', async () => {
+    for (const rel of ['src/a.ts', 'README.md', 'src/package.json.ts', 'docs/Makefile.md']) {
+      await expect(evaluate({
+        toolName: 'Write',
+        args: { path: rel, content: 'x' },
+        accesses: ToolAccesses.writeFile(join(workspaceDir, rel)),
+      }), rel).resolves.toMatchObject({
+        policyName: 'git-cwd-write-approve',
+        result: { kind: 'approve' },
+      });
+    }
+  });
+
+  it('does not fire on a read of an execution-triggering file', async () => {
+    // Reading package.json is routine; only writing it is the risk.
+    const result = await evaluate({
+      toolName: 'Read',
+      args: { path: 'package.json' },
+      accesses: ToolAccesses.readFile(join(workspaceDir, 'package.json')),
+    });
+    expect(result?.policyName).not.toBe('execution-trigger-write-ask');
+  });
+
   it('does not use git-cwd approval in auto mode', async () => {
     mode = 'auto';
     await expect(evaluate({
