@@ -127,7 +127,7 @@ export class GrepTool implements IGrepTool {
         env: this.env,
         workspace: this.workspace,
         operation: 'search',
-        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
+        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: true },
       });
     }
     const searchPaths = [path ?? this.workspace.workspaceDir];

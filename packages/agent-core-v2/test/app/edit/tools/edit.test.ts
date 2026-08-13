@@ -75,7 +75,7 @@ function buildTool(
       reg.define(IFileEditService, FileEditService);
     },
   });
-  return new EditTool(ix.get(IFileEditService), env, workspace);
+  return new EditTool(ix.get(IFileEditService), fs, env, workspace);
 }
 
 function isPromiseLike(
