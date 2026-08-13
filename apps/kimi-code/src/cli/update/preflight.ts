@@ -87,7 +87,7 @@ export function installCommandFor(
   }
 }
 
-export function canAutoInstall(source: InstallSource, platform: NodeJS.Platform): boolean {
+export function canAutoInstall(source: InstallSource, _platform: NodeJS.Platform): boolean {
   switch (source) {
     case 'npm-global':
     case 'pnpm-global':
@@ -99,7 +99,11 @@ export function canAutoInstall(source: InstallSource, platform: NodeJS.Platform)
       // behind the CDN release — prompt the user to run `brew upgrade` manually.
       return false;
     case 'native':
-      return platform !== 'win32';
+      // The native updater is `curl … install.sh | bash` against the CDN,
+      // with nothing verifying what comes back. Running that unattended in
+      // the background turns a bad day at the CDN into local code execution,
+      // so surface the command and let the user run it deliberately.
+      return false;
     case 'unsupported':
       return false;
   }

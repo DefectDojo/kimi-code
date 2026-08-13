@@ -491,28 +491,21 @@ describe('runUpdatePreflight', () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
-  it('native on darwin: spawns bash -c with pipefail-guarded curl|bash', async () => {
+  it('native on darwin: prints the manual install command, does not spawn', async () => {
+    // The native updater is an unverified `curl … | bash` against the CDN, so
+    // it is never run unattended: the command is surfaced for the user to run.
     disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.detectInstallSource.mockResolvedValue('native');
-    mocks.promptForInstallChoice.mockResolvedValue('install');
-    mockSpawnExit(0);
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     try {
-      const { options } = captureOutput();
-      await runUpdatePreflight('0.4.0', options);
-      const call = mocks.spawn.mock.calls[0];
-      expect(call?.[0]).toBe('bash');
-      expect(call?.[2]).toEqual({ stdio: 'inherit' });
-      const [flag, script] = call?.[1] as string[];
-      expect(flag).toBe('-c');
-      // pipefail must come before the pipeline so a failed `curl` is not masked
-      // by the trailing `bash` exiting 0 (see "surfaces a failed curl" below).
-      expect(script).toContain('set -o pipefail');
-      expect(script).toContain('curl -fsSL https://code.kimi.com/kimi-code/install.sh');
-      expect(script).toContain('| bash');
+      const { stdout, options } = captureOutput();
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+      expect(stdout.join('')).toContain('curl -fsSL https://code.kimi.com/kimi-code/install.sh');
+      expect(promptForInstallChoice).not.toHaveBeenCalled();
+      expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }

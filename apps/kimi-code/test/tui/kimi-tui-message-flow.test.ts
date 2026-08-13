@@ -5638,6 +5638,9 @@ command = "vim"
   it('shows an inline Official error when the marketplace is unreachable, keeping the panel open', async () => {
     const originalFetch = globalThis.fetch;
     process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = 'https://example.test/marketplace.json';
+    // Allow the host so this stays a test about an unreachable catalog rather
+    // than one rejected by the host allowlist.
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS'] = 'example.test';
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -5665,6 +5668,7 @@ command = "vim"
       // The panel stays mounted; the failure does not close /plugins.
       expect(driver.state.editorContainer.children[0]).toBe(panel);
     } finally {
+      delete process.env['KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS'];
       vi.stubGlobal('fetch', originalFetch);
     }
   });

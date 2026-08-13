@@ -305,6 +305,9 @@ describe('loadPluginMarketplace', () => {
   });
 
   it('keeps the built-in entries when the catalog is unreachable', async () => {
+    // Not a default catalog host; name it explicitly the way an operator
+    // would for a self-hosted catalog.
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS', 'example.test,example.com');
     const fetchImpl = vi.fn(async () => {
       throw new Error('fetch failed');
     }) as unknown as typeof fetch;
@@ -524,6 +527,7 @@ describe('loadPluginMarketplace', () => {
   });
 
   it('loads an explicit remote marketplace with injectable fetch', async () => {
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS', 'example.com');
     const source = 'https://example.com/plugins/marketplace.json';
     const fetchImpl = vi.fn(async () => ({
       ok: true,
@@ -588,4 +592,49 @@ describe('loadPluginMarketplace', () => {
     );
   });
 
+
 });
+
+describe('marketplace host policy', () => {
+  it('rejects a plaintext http catalog', async () => {
+    await expect(
+      loadPluginMarketplace({ workDir: '/tmp', source: 'http://evil.example/marketplace.json' }),
+    ).rejects.toThrow(/must be served over https/);
+  });
+
+  it('rejects an https catalog on a host that is not allowed', async () => {
+    await expect(
+      loadPluginMarketplace({ workDir: '/tmp', source: 'https://evil.example/marketplace.json' }),
+    ).rejects.toThrow(/is not allowed/);
+  });
+
+  it('allows a self-hosted catalog named in the allowlist env', async () => {
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_ALLOWED_HOSTS', 'internal.example');
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ plugins: [] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      loadPluginMarketplace({
+        workDir: '/tmp',
+        source: 'https://internal.example/marketplace.json',
+        fetchImpl,
+      }),
+    ).resolves.toMatchObject({ plugins: [] });
+  });
+
+  it('allows a loopback catalog over http (local dev server)', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ plugins: [] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      loadPluginMarketplace({
+        workDir: '/tmp',
+        source: 'http://127.0.0.1:8787/marketplace.json',
+        fetchImpl,
+      }),
+    ).resolves.toMatchObject({ plugins: [] });
+  });
+});
+
