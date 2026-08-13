@@ -298,6 +298,32 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 
+  it('still asks for sensitive files in auto mode', async () => {
+    // Auto mode speeds up ordinary work; it must not silently waive the
+    // secrets check.
+    mode = 'auto';
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: '.env', content: 'SECRET=1' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, '.env')),
+    })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('still asks for git control files in auto mode', async () => {
+    mode = 'auto';
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: '.git/config', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, '.git/config')),
+    })).resolves.toMatchObject({
+      policyName: 'git-control-path-access-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
   it('does not blanket-approve Bash in auto mode', async () => {
     // Auto mode should remove friction, not convert model-chosen shell
     // commands into unreviewed execution.
@@ -326,8 +352,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       });
     } finally {
       vi.unstubAllEnvs();
-    }
-  });
+    }  });
 
   it('does not use git-cwd approval in auto mode', async () => {
     mode = 'auto';

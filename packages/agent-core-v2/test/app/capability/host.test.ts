@@ -154,4 +154,47 @@ describe('capability host downloadToFile', () => {
     expect(received).toBe(11);
     expect(await readFile(dest, 'utf-8')).toBe('hello world');
   });
+
+  function bodyOf(text: string): ReadableStream {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    });
+  }
+
+  // sha256('hello world')
+  const HELLO_SHA256 = 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
+
+  it('keeps a download whose checksum matches the expected digest', async () => {
+    const dest = path.join(root, 'verified.txt');
+
+    await downloadToFile(
+      'https://cdn.example.test/hello',
+      dest,
+      undefined,
+      fakeFetchWith(bodyOf('hello world')) as never,
+      { expectedSha256: HELLO_SHA256 },
+    );
+
+    expect(await readFile(dest, 'utf-8')).toBe('hello world');
+  });
+
+  it('rejects and removes a download whose checksum does not match', async () => {
+    const dest = path.join(root, 'tampered.txt');
+
+    await expect(
+      downloadToFile(
+        'https://cdn.example.test/hello',
+        dest,
+        undefined,
+        fakeFetchWith(bodyOf('hello wOrld')) as never,
+        { expectedSha256: HELLO_SHA256 },
+      ),
+    ).rejects.toThrow(/Checksum mismatch/);
+
+    // The unverified bytes must not survive on disk for a later step to run.
+    await expect(readFile(dest, 'utf-8')).rejects.toThrow();
+  });
 });

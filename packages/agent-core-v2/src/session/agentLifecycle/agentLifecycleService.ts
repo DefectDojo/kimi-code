@@ -36,6 +36,8 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { PermissionModeConfiguredModel } from '#/agent/permissionMode/permissionModeOps';
+import { PERMISSION_SECTION, type PermissionConfig } from '#/agent/permissionRules/configSection';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -195,6 +197,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const hasRestoredPermissionMode = wire.getModel(PermissionModeConfiguredModel);
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
+    }
+    // Seed the agent with the user's persisted `[permission]` rules. The
+    // `permission.rules.add` Op is not persisted, so a rules model always
+    // starts empty and has to be filled here — otherwise the config section
+    // parses fine but the user-configured policies never see a rule to match.
+    const configuredRules = this.config.get<PermissionConfig>(PERMISSION_SECTION)?.rules;
+    if (configuredRules !== undefined && configuredRules.length > 0) {
+      handle.accessor.get(IAgentPermissionRulesService).addRules(configuredRules);
     }
   }
 

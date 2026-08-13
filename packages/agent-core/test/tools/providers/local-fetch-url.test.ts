@@ -112,6 +112,50 @@ describe('LocalFetchURLProvider SSRF guard', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('rejects NAT64-embedded private IPv4 literals', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    // 64:ff9b::/96 (RFC 6052) carries the v4 address in its low 32 bits.
+    await expect(provider.fetch('http://[64:ff9b::169.254.169.254]/latest/meta-data')).rejects.toThrow(
+      'Refusing to fetch private address',
+    );
+    await expect(provider.fetch('http://[64:ff9b::127.0.0.1]/')).rejects.toThrow(
+      'Refusing to fetch private address',
+    );
+    await expect(provider.fetch('http://[64:ff9b::10.0.0.1]/')).rejects.toThrow(
+      'Refusing to fetch private address',
+    );
+    // 64:ff9b:1::/48 (RFC 8215) has no fixed embedding offset: blocked whole.
+    await expect(provider.fetch('http://[64:ff9b:1::a9fe:a9fe]/')).rejects.toThrow(
+      'Refusing to fetch private address',
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('still allows a NAT64 address that embeds a public IPv4', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(htmlResponse('ok', 'text/plain'));
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    const result = await provider.fetch('http://[64:ff9b::93.184.216.34]/');
+
+    expect(result).toEqual({ content: 'ok', kind: 'passthrough' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a hostname that resolves to a NAT64-embedded private IPv4', async () => {
+    lookupMock.mockResolvedValue([{ address: '64:ff9b::169.254.169.254', family: 6 }]);
+    const fetchImpl = vi.fn<typeof fetch>();
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('http://nat64.example.test/')).rejects.toThrow(
+      'resolves to private address',
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('rejects localhost and *.localhost aliases', async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const provider = new LocalFetchURLProvider({ fetchImpl });
