@@ -277,6 +277,24 @@ describe('AgentToolApprovalService', () => {
       });
     });
 
+
+    it('refuses instead of blocking when the session is unattended', async () => {
+      // Auto mode is documented as never asking, and headless runs turn it on.
+      // Going to the broker there would wait for a decision that never comes.
+      mode = 'auto';
+      const request = useBroker(async () => ({ decision: 'approved' }));
+
+      const result = await make().requestToolApproval(
+        makeContext('Bash', { command: 'echo hi' }),
+        ask(),
+        'fallback-ask',
+      );
+
+      expect(request).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ veto: { isError: true } });
+      expect((result as { veto: { output: string } }).veto.output).toContain('unattended');
+    });
+
     it('publishes approval events around the broker round-trip', async () => {
       const events = subscribeApprovalEvents();
       const request = useBroker(async () => ({

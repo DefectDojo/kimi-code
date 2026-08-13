@@ -14,11 +14,15 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
  * model picked up — including one that arrived in a repo file, an issue, or a
  * fetched page — into an unreviewed shell execution.
  *
- * Excluding it here does not deny it: the call falls through to the rest of
- * the chain, so a user `[permission] allow` rule still authorizes it. That
+ * `FetchURL` is here for the matching reason on the way out: it sends
+ * caller-chosen bytes to a caller-chosen host, and an unattended session is
+ * exactly where nobody would notice it happening.
+ *
+ * Excluding them here does not deny them: the call falls through to the rest
+ * of the chain, so a user `[permission] allow` rule still authorizes it. That
  * makes the grant explicit and auditable instead of implied by the mode.
  */
-const AUTO_MODE_EXCLUDED_TOOLS = new Set<string>(['Bash']);
+const AUTO_MODE_EXCLUDED_TOOLS = new Set<string>(['Bash', 'FetchURL']);
 
 /**
  * Escape hatch for operators who accept the risk and need the previous
