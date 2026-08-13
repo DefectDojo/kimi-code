@@ -75,16 +75,40 @@ export interface LocalFetchURLProviderOptions {
  * "this network", for both address families. BlockList.check() maps
  * IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) onto the IPv4
  * subnets, so mapped literals cannot slip past the v4 rules.
+ *
+ * NAT64 (RFC 6052) embeds an IPv4 address in the low 32 bits of the
+ * well-known prefix 64:ff9b::/96. Those are ordinary IPv6 addresses that
+ * the v4 rules above do not cover, so on a NAT64 network they would
+ * translate straight through to the embedded v4 target. Each private v4
+ * range is therefore mirrored into NAT64 space (prefix 96 + the v4 prefix
+ * length); public v4 addresses reached over NAT64 stay allowed. The
+ * local-use prefix 64:ff9b:1::/48 (RFC 8215) has no fixed embedding
+ * offset, so it is blocked wholesale.
  */
+const PRIVATE_IPV4_SUBNETS: readonly (readonly [string, number])[] = [
+  ['0.0.0.0', 8], // "this network"
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10], // CGNAT
+  ['127.0.0.0', 8], // loopback
+  ['169.254.0.0', 16], // link-local / cloud metadata
+  ['172.16.0.0', 12],
+  ['192.168.0.0', 16],
+];
+
+const NAT64_WELL_KNOWN_PREFIX = '64:ff9b::';
+const NAT64_WELL_KNOWN_PREFIX_BITS = 96;
+
 const PRIVATE_ADDRESS_BLOCKLIST = (() => {
   const list = new BlockList();
-  list.addSubnet('0.0.0.0', 8, 'ipv4'); // "this network"
-  list.addSubnet('10.0.0.0', 8, 'ipv4');
-  list.addSubnet('100.64.0.0', 10, 'ipv4'); // CGNAT
-  list.addSubnet('127.0.0.0', 8, 'ipv4'); // loopback
-  list.addSubnet('169.254.0.0', 16, 'ipv4'); // link-local / cloud metadata
-  list.addSubnet('172.16.0.0', 12, 'ipv4');
-  list.addSubnet('192.168.0.0', 16, 'ipv4');
+  for (const [address, prefixBits] of PRIVATE_IPV4_SUBNETS) {
+    list.addSubnet(address, prefixBits, 'ipv4');
+    list.addSubnet(
+      `${NAT64_WELL_KNOWN_PREFIX}${address}`,
+      NAT64_WELL_KNOWN_PREFIX_BITS + prefixBits,
+      'ipv6',
+    );
+  }
+  list.addSubnet('64:ff9b:1::', 48, 'ipv6'); // NAT64 local-use prefix
   list.addSubnet('::', 128, 'ipv6'); // unspecified
   list.addSubnet('::1', 128, 'ipv6'); // loopback
   list.addSubnet('fc00::', 7, 'ipv6'); // ULA
