@@ -10,6 +10,8 @@ import {
   type SlashCommand,
 } from '@moonshot-ai/pi-tui';
 
+import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
+
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 const MAX_FALLBACK_SCAN = 2000;
 const MAX_FALLBACK_SUGGESTIONS = 50;
@@ -45,6 +47,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly fdPath: string | null,
     additionalDirs: readonly string[] = [],
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
+    private readonly skillCommandNames?: ReadonlySet<string>,
   ) {
     this.additionalDirs = additionalDirs.map((dir) => normalizePath(resolve(workDir, dir)));
     // Build an expanded list that includes alias entries so that
@@ -100,11 +103,34 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    if (shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)) {
+    // An inline skill token the cursor is still on stays eligible for skill
+    // selection even when the input begins with a slash command and has text
+    // after the cursor — the argument suppression below guards the command's
+    // own arguments, not an inline skill the user inserts mid-text. Computed
+    // before the leading-whitespace suppression: an indented inline token
+    // (`  /skill:rev`) is a skill reference, not a path to suppress.
+    const inlineSkillPrefix = extractInlineSkillPrefix(textBeforeCursor, cursorLine);
+
+    if (
+      inlineSkillPrefix === null &&
+      shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)
+    ) {
       return null;
     }
 
+    // A `/` at the start of a later line is an inline skill reference, not a
+    // start-of-message slash command: offer the skill-only picker there.
     if (
+      cursorLine > 0 &&
+      textBeforeCursor.trim() === '/' &&
+      this.getInputMode() !== 'bash' &&
+      options.force !== true
+    ) {
+      return this.getInlineSkillSuggestions('/');
+    }
+
+    if (
+      inlineSkillPrefix === null &&
       shouldSuppressSlashArgumentCompletion(
         textBeforeCursor,
         currentLine.slice(cursorCol),
@@ -115,8 +141,9 @@ export class FileMentionProvider implements AutocompleteProvider {
     }
 
     // Handle slash-command name completion ourselves so that aliases are
-    // searchable and visible in the label.
-    if (!options.force && textBeforeCursor.startsWith('/')) {
+    // searchable and visible in the label. Only the first line can host a
+    // start-of-message slash command; later lines are inline skill territory.
+    if (!options.force && cursorLine === 0 && textBeforeCursor.startsWith('/')) {
       const spaceIndex = textBeforeCursor.indexOf(' ');
       if (spaceIndex === -1) {
         const tokens = textBeforeCursor
@@ -185,6 +212,20 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
+    // Inline skill selection: `/` after whitespace mid-input in prompt mode.
+    // Runs after slash-command argument handling so known commands such as
+    // `/add-dir /` keep their own argument completions.
+    if (
+      inlineSkillPrefix !== null &&
+      this.getInputMode() !== 'bash' &&
+      options.force !== true
+    ) {
+      // A mid-input `/` in prompt mode is only meaningful as skill selection;
+      // when no skills are registered, suppress path completion instead of
+      // offering root directories.
+      return this.getInlineSkillSuggestions(inlineSkillPrefix);
+    }
+
     try {
       const inner = await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
       if (inner === null || this.getInputMode() !== 'bash') {
@@ -199,6 +240,37 @@ export class FileMentionProvider implements AutocompleteProvider {
     }
   }
 
+  private getInlineSkillSuggestions(prefix: string): AutocompleteSuggestions | null {
+    if (this.skillCommandNames === undefined || this.skillCommandNames.size === 0) return null;
+    const names = this.skillCommandNames;
+    const tokens = prefix
+      .slice(1)
+      .trim()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+
+    const matches: Array<{ cmd: SlashAutocompleteCommand; score: number }> = [];
+    for (const cmd of this.slashCommands) {
+      if (!names.has(cmd.name)) continue;
+      const score = scoreTokens(tokens, cmd.name);
+      if (score !== null) {
+        matches.push({ cmd, score });
+      }
+    }
+    matches.sort((a, b) => a.score - b.score);
+
+    if (matches.length === 0) return null;
+    return {
+      items: matches.map((m) => ({
+        value: m.cmd.name,
+        label: m.cmd.name,
+        description: formatSlashCommandDescription(m.cmd),
+        data: { inlineSkill: true },
+      })),
+      prefix,
+    };
+  }
+
   applyCompletion(
     lines: string[],
     cursorLine: number,
@@ -206,20 +278,90 @@ export class FileMentionProvider implements AutocompleteProvider {
     item: AutocompleteItem,
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    // Inline skill selection mid-input: pi-tui's default applyCompletion
+    // treats mid-line slash prefixes as file paths and drops the `/`. Preserve
+    // the slash and add a trailing space so the completed token stays a valid
+    // skill reference (e.g. `hello /rev` -> `hello /skill:review `).
+    if (
+      item.data?.['inlineSkill'] === true &&
+      this.getInputMode() !== 'bash' &&
+      prefix.startsWith('/')
+    ) {
+      const currentLine = lines[cursorLine] ?? '';
+      const textBeforeCursor = currentLine.slice(0, cursorCol);
+      if (extractInlineSkillPrefix(textBeforeCursor, cursorLine) === prefix) {
+        const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+        const afterCursor = currentLine.slice(cursorCol);
+        const newLines = [...lines];
+        newLines[cursorLine] = `${beforePrefix}/${item.value} ${afterCursor}`;
+        return {
+          lines: newLines,
+          cursorLine,
+          // +2 for the preserved "/" and the appended " ".
+          cursorCol: beforePrefix.length + item.value.length + 2,
+        };
+      }
+    }
     // In bash mode a leading `/` is a path, but pi-tui's applyCompletion
     // mistakes it for a slash command (prefix starts with `/`, nothing before
     // it, no second `/`) and prepends another `/`, producing e.g.
     // `//Applications/ ` with a trailing space that also blocks further
     // completion. Handle path completion ourselves so the value replaces the
-    // prefix verbatim. `@` mentions keep pi-tui's behaviour.
+    // prefix verbatim.
     if (this.getInputMode() === 'bash' && prefix.startsWith('/')) {
       return applyPathCompletion(lines, cursorLine, cursorCol, item, prefix);
+    }
+    // Editor caches suggestions.prefix across in-flight refreshes. Re-cut the
+    // live `@` token so Tab/Enter does not splice a second `@` onto a stale range.
+    // Only mention pickers have a prefix that starts with `@`. Path/slash lists
+    // can still be visible after the user types `@`, including a `@scope/` entry.
+    if (prefix.startsWith('@')) {
+      const currentLine = lines[cursorLine] ?? '';
+      const textBeforeCursor = currentLine.slice(0, cursorCol);
+      const livePrefix = extractAtPrefix(textBeforeCursor);
+      if (livePrefix === null) {
+        return { lines, cursorLine, cursorCol };
+      }
+      const applyItem =
+        livePrefix.startsWith('@"') && item.value.startsWith('@') && !item.value.startsWith('@"')
+          ? { ...item, value: `@"${item.value.slice(1)}"` }
+          : item;
+      return this.inner.applyCompletion(lines, cursorLine, cursorCol, applyItem, livePrefix);
     }
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
 }
 
+/**
+ * Extract the inline skill prefix (e.g. `/rev`) from `text` when the cursor is
+ * positioned after a `/` that is preceded by whitespace and not part of the
+ * leading slash-command area. Returns `null` when the context is not an inline
+ * skill trigger.
+ *
+ * On lines after the first, a `/` at the start of the line always begins an
+ * inline skill prefix — including the partially typed `/rev` — so the picker
+ * stays in skill-only mode while the token is completed.
+ */
+export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): string | null {
+  if (cursorLine > 0) {
+    const trimmedStart = text.trimStart();
+    const match = /^\/[^\s/]*$/.exec(trimmedStart);
+    if (match !== null) return match[0];
+  }
+  // findInlineSkillTokens skips the leading slash-command area, so a line such
+  // as `/skill:review args /` still yields the trailing `/` token.
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: () => true,
+    allowEmpty: true,
+  });
+  const token = tokens.findLast((t) => t.end === text.length);
+  return token === undefined ? null : text.slice(token.start);
+}
+
 export function extractAtPrefix(text: string): string | null {
+  const quotedPrefix = extractQuotedAtPrefix(text);
+  if (quotedPrefix !== null) return quotedPrefix;
+
   let tokenStart = 0;
   for (let i = text.length - 1; i >= 0; i -= 1) {
     if (PATH_DELIMITERS.has(text[i] ?? '')) {
@@ -229,6 +371,21 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+function extractQuotedAtPrefix(text: string): string | null {
+  let inQuotes = false;
+  let quoteStart = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '"') {
+      inQuotes = !inQuotes;
+      if (inQuotes) quoteStart = i;
+    }
+  }
+  if (!inQuotes || quoteStart <= 0 || text[quoteStart - 1] !== '@') return null;
+  const atIndex = quoteStart - 1;
+  if (atIndex > 0 && !PATH_DELIMITERS.has(text[atIndex - 1] ?? '')) return null;
+  return text.slice(atIndex);
 }
 
 function isExecutableFd(fdPath: string): boolean {
@@ -296,7 +453,8 @@ function getFsMentionSuggestions(
 ): AutocompleteSuggestions | null {
   if (signal.aborted) return null;
 
-  const query = atPrefix.slice(1);
+  const isQuotedPrefix = atPrefix.startsWith('@"');
+  const query = isQuotedPrefix ? atPrefix.slice(2) : atPrefix.slice(1);
   const candidates = collectFsMentionCandidates(workDir, additionalDirs, signal);
   if (candidates.length === 0 || signal.aborted) return null;
 
@@ -305,7 +463,7 @@ function getFsMentionSuggestions(
 
   return {
     prefix: atPrefix,
-    items: ranked.map(toMentionItem),
+    items: ranked.map((candidate) => toMentionItem(candidate, isQuotedPrefix)),
   };
 }
 
@@ -414,9 +572,10 @@ function scoreCandidate(candidate: FsMentionCandidate, lowerQuery: string): numb
   return score;
 }
 
-function toMentionItem(candidate: FsMentionCandidate): AutocompleteItem {
+function toMentionItem(candidate: FsMentionCandidate, isQuotedPrefix: boolean): AutocompleteItem {
   const valuePath = candidate.isDirectory ? `${candidate.path}/` : candidate.path;
-  const value = valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`;
+  const value =
+    isQuotedPrefix || valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`;
   const label = `${basename(candidate.path)}${candidate.isDirectory ? '/' : ''}`;
   return {
     value,

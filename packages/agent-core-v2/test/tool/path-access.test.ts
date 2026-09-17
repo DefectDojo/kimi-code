@@ -4,10 +4,14 @@ import nodePath from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import type { ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
+  DEFAULT_WORKSPACE_ACCESS_POLICY,
   assertRealPathAccess,
   extendWorkspaceWithSkillRoots,
   isSensitiveFile,
+  resolvePathAccess,
+  resolvePathAccessPath,
 } from '#/tool/path-access';
 
 describe('isSensitiveFile', () => {
@@ -154,11 +158,6 @@ describe('extendWorkspaceWithSkillRoots', () => {
 describe('assertRealPathAccess', () => {
   const workspace = { workspaceDir: '/ws', additionalDirs: [] as string[] };
 
-  /**
-   * Resolver where `links` maps a path to what it really resolves to, and
-   * `missing` paths reject the way `realpath` does for a path that does not
-   * exist yet (which is what makes the guard walk up to the parent).
-   */
   function resolver(
     links: Record<string, string>,
     missing: readonly string[] = [],
@@ -183,7 +182,6 @@ describe('assertRealPathAccess', () => {
   });
 
   it('rejects an in-workspace path that resolves outside the workspace', async () => {
-    // scripts/deploy.sh -> /home/u/.zshrc
     await expect(
       assertRealPathAccess(
         '/ws/scripts/deploy.sh',
@@ -196,7 +194,6 @@ describe('assertRealPathAccess', () => {
   });
 
   it('rejects a link whose target is sensitive even when the link name is innocuous', async () => {
-    // notes.md -> /home/u/.aws/credentials
     await expect(
       assertRealPathAccess(
         '/ws/notes.md',
@@ -209,7 +206,6 @@ describe('assertRealPathAccess', () => {
   });
 
   it('resolves the parent directory for a file that does not exist yet', async () => {
-    // scripts -> /etc, so a new file under it lands outside the workspace.
     await expect(
       assertRealPathAccess(
         '/ws/scripts/new.sh',
@@ -246,7 +242,6 @@ describe('assertRealPathAccess', () => {
   });
 
   it('leaves an explicitly-outside path to the approval layer', async () => {
-    // Already outside the workspace lexically: not this guard's call.
     await expect(
       assertRealPathAccess(
         '/tmp/scratch',
@@ -286,5 +281,52 @@ describe('assertRealPathAccess against a real filesystem', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('resolvePathAccess shell path bridge', () => {
+  const WIN_ENV = {
+    pathClass: 'win32' as const,
+    homeDir: 'C:\\Users\\test',
+    osKind: 'Windows',
+    shellName: 'bash' as const,
+    shellPath: 'C:\\kimi-test-nonexistent\\Git\\bin\\bash.exe',
+  };
+
+  it('routes win32 file-tool paths through the shell path bridge', () => {
+    const result = resolvePathAccessPath('/c/workspace/file.txt', {
+      env: WIN_ENV,
+      workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      operation: 'read',
+    });
+    expect(result).toBe('C:/workspace/file.txt');
+  });
+
+  it('passes root-relative POSIX paths through when cygpath is unavailable', () => {
+    const result = resolvePathAccessPath('/tmp/scratch.txt', {
+      env: WIN_ENV,
+      workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      operation: 'read',
+    });
+    expect(result).toBe('/tmp/scratch.txt');
+  });
+
+  it('normalizes through an explicitly injected shell path bridge', () => {
+    const bridge: ShellPathBridge = {
+      toShellPath: (p) => p,
+      fromShellPath: (p) => (p.startsWith('/tmp/') ? `C:/Temp/${p.slice('/tmp/'.length)}` : p),
+    };
+    const result = resolvePathAccess(
+      '/tmp/notes.txt',
+      'C:\\workspace',
+      { workspaceDir: 'C:\\workspace', additionalDirs: [] },
+      {
+        operation: 'read',
+        pathClass: 'win32',
+        policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+        shellPathBridge: bridge,
+      },
+    );
+    expect(result).toEqual({ path: 'C:/Temp/notes.txt', outsideWorkspace: true });
   });
 });

@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -46,6 +46,7 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['ReadMediaFile', { path: '/workspace/image.png' }],
     ['SetTodoList', { items: [] }],
     ['TodoList', {}],
+    ['NotifyUser', { message: 'Reading the parser first.' }],
     ['TaskList', {}],
     ['TaskOutput', { task_id: 'task_1' }],
     ['CronList', {}],
@@ -85,8 +86,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
   });
 
   it('does not approve FetchURL', () => {
-    // FetchURL sends caller-chosen bytes to a caller-chosen host, so it is the
-    // sink half of an exfiltration pair and has to go through approval.
     expect(policy.evaluate(policyContext('FetchURL', { url: 'https://example.com' }))).toBeUndefined();
   });
 });

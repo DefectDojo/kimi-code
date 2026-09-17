@@ -14,13 +14,23 @@
 export * from './mini-db.js';
 export { UniqueViolationError } from './index-manager.js';
 export { LockError } from './lockfile.js';
+export { classifyStorageError } from './error-classification.js';
+export type { StorageErrorAction } from './error-classification.js';
+export { wipeStoreDir } from './wipe.js';
+export type { WipeOutcome, WipeStoreDirOptions } from './wipe.js';
 // The close-gate + in-flight-count lifecycle primitive, shared with embedders
 // that run lifecycle-managed background work (kap-server's search service).
 export { OpTracker } from './op-tracker.js';
 export { TextIndexBuildingError } from './text-index/index.js';
 export { normalizeLiteral, createNgramTokenizer } from './trigram.js';
 export { tokenize } from './text-index/index.js';
-export type { RecoveryInfo } from './recovery.js';
+export type { RecoveryInfo, RecoveryPhaseTimings } from './recovery.js';
+export type {
+  MiniDbLifecycleState,
+  MiniDbLifecycleStatus,
+  OpenPhaseTimings,
+  OpenTextIndexSource,
+} from './lifecycle-status.js';
 export type { IndexDef, IndexInfo, IndexType } from './index-manager.js';
 export type { CompoundIndexDef, CompoundIndexInfo } from './compound-index.js';
 export type { TextIndexTokenizerName } from './trigram.js';

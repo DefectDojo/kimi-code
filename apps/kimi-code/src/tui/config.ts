@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
+import type { MermaidRenderMode } from '#/tui/utils/markdown-options';
 import { getDataDir } from '#/utils/paths';
 
 export const INVALID_TUI_CONFIG_MESSAGE =
@@ -51,10 +52,21 @@ export const DEFAULT_STATUS_LINE_CONFIG: StatusLineConfig = {
   command: null,
 };
 
+export const MarkdownConfigSchema = z.object({
+  mermaid: z.enum(['off', 'final']),
+});
+export type MarkdownConfig = z.infer<typeof MarkdownConfigSchema>;
+
+export const DEFAULT_MARKDOWN_CONFIG: MarkdownConfig = {
+  mermaid: 'final',
+};
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
+  render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
+  disable_feedback_survey: z.boolean().optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -72,20 +84,32 @@ export const TuiConfigFileSchema = z.object({
     })
     .optional(),
   status_line: StatusLineFileConfigSchema.optional(),
+  markdown: z
+    .object({
+      mermaid: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
+  /** LaTeX math rendering in Markdown; optional only so older hand-built test
+   * fixtures still typecheck. */
+  renderLatex: z.boolean().optional(),
   disablePasteBurst: z.boolean(),
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
+  disableFeedbackSurvey: z.boolean().optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
+  /** Present in every normalized config; optional only so hand-built test
+   * fixtures from before this field existed still typecheck. */
+  markdown: MarkdownConfigSchema.optional(),
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -104,12 +128,15 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
+  renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
+  disableFeedbackSurvey: false,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
   statusLine: DEFAULT_STATUS_LINE_CONFIG,
+  markdown: DEFAULT_MARKDOWN_CONFIG,
 });
 
 /**
@@ -188,10 +215,22 @@ export function normalizeTuiConfig(
         return known;
       })
       .map((item) => item as StatusLineItem) ?? null;
+  const mermaidValue = config.markdown?.mermaid;
+  let mermaidMode: MermaidRenderMode = DEFAULT_MARKDOWN_CONFIG.mermaid;
+  if (mermaidValue !== undefined) {
+    if (mermaidValue === 'off' || mermaidValue === 'final') {
+      mermaidMode = mermaidValue;
+    } else {
+      warn(`[tui.toml] ignoring unknown markdown.mermaid value: ${mermaidValue}`);
+    }
+  }
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
+    renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    disableFeedbackSurvey:
+      config.disable_feedback_survey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -208,13 +247,18 @@ export function normalizeTuiConfig(
           ? null
           : statusLineCommand,
     },
+    markdown: {
+      mermaid: mermaidMode,
+    },
   });
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
   // An active status_line must round-trip: any preference save rewrites the
   // whole file, so the section is emitted live when set and left as a
-  // commented-out guide when unset.
+  // commented-out guide when unset. The [markdown] section follows the same
+  // pattern: live when mermaid rendering is turned off, commented guide at
+  // the default.
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];
@@ -224,6 +268,13 @@ export function renderTuiConfig(config: TuiConfig): string {
   if (statusCommand) {
     statusLines.push(`command = "${escapeTomlBasicString(statusCommand)}"`);
   }
+  const markdownSection =
+    config.markdown?.mermaid === 'off'
+      ? `[markdown]\nmermaid = "off" # "final" | "off"\n`
+      : `# [markdown]
+# Draw mermaid code blocks as diagrams in the terminal; "off" keeps highlighted source.
+# mermaid = "final" # "final" | "off"
+`;
   const statusSection =
     statusLines.length > 0
       ? `[status_line]\n${statusLines.join('\n')}\n`
@@ -239,8 +290,10 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
+render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
+disable_feedback_survey = ${String(config.disableFeedbackSurvey === true)} # true hides the occasional session rating prompt
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR
@@ -252,6 +305,7 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
 
+${markdownSection}
 ${statusSection}`;
 }
 

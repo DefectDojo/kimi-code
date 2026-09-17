@@ -5,29 +5,8 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
-/**
- * Tools that auto mode does not blanket-approve.
- *
- * Auto mode exists to take friction out of ordinary work, and headless runs
- * (`kimi -p`) turn it on for the whole session. Bash runs arbitrary commands,
- * so approving it purely because the mode is `auto` turns any instruction the
- * model picked up — including one that arrived in a repo file, an issue, or a
- * fetched page — into an unreviewed shell execution.
- *
- * `FetchURL` is here for the matching reason on the way out: it sends
- * caller-chosen bytes to a caller-chosen host, and an unattended session is
- * exactly where nobody would notice it happening.
- *
- * Excluding them here does not deny them: the call falls through to the rest
- * of the chain, so a user `[permission] allow` rule still authorizes it. That
- * makes the grant explicit and auditable instead of implied by the mode.
- */
 const AUTO_MODE_EXCLUDED_TOOLS = new Set<string>(['Bash', 'FetchURL']);
 
-/**
- * Escape hatch for operators who accept the risk and need the previous
- * behaviour (an existing unattended pipeline, say). Off by default.
- */
 const AUTO_APPROVE_BASH_ENV = 'KIMI_CODE_AUTO_APPROVE_BASH';
 
 function isEnvOptIn(env: NodeJS.ProcessEnv, name: string): boolean {

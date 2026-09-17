@@ -1,12 +1,3 @@
-/**
- * `web` domain tests — `LocalFetchURLProvider` SSRF guard and redirects.
- *
- * Locks in that the provider rejects URLs whose IP literal or resolved
- * address is private / loopback / link-local (including IPv4-mapped IPv6
- * forms), fails closed on DNS errors, and follows redirects manually with
- * every hop re-validated. DNS is mocked so tests stay hermetic.
- */
-
 import { lookup } from 'node:dns/promises';
 
 import { Agent } from 'undici';
@@ -67,7 +58,6 @@ describe('LocalFetchURLProvider SSRF guard', () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const provider = new LocalFetchURLProvider({ fetchImpl });
 
-    // 64:ff9b::/96 (RFC 6052) carries the v4 address in its low 32 bits.
     await expect(provider.fetch('http://[64:ff9b::169.254.169.254]/latest/meta-data')).rejects.toThrow(
       'Refusing to fetch private address',
     );
@@ -77,7 +67,6 @@ describe('LocalFetchURLProvider SSRF guard', () => {
     await expect(provider.fetch('http://[64:ff9b::10.0.0.1]/')).rejects.toThrow(
       'Refusing to fetch private address',
     );
-    // 64:ff9b:1::/48 (RFC 8215) has no fixed embedding offset: blocked whole.
     await expect(provider.fetch('http://[64:ff9b:1::a9fe:a9fe]/')).rejects.toThrow(
       'Refusing to fetch private address',
     );
