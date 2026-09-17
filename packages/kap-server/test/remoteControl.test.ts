@@ -84,93 +84,36 @@ describe('server-v2 /api/v1/remote-control', () => {
     return (await res.json()) as Envelope<RemoteControlStatusWire>;
   }
 
-  it('starts and stops the tunnel at runtime, dedupes concurrent enables, and tracks relay-initiated shutdown', async () => {
+  it('refuses to enable the tunnel', async () => {
     const relay = await startRegisterAckRelay();
     vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', `http://127.0.0.1:${relay.port}`);
+    try {
+      const body = await postRemoteControl(true);
 
-    const initial = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
-    const initialBody = (await initial.json()) as Envelope<RemoteControlStatusWire>;
-    expect(initialBody.code).toBe(0);
-    expect(initialBody.data.state).toBe('off');
+      expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+      expect(body.msg).toMatch(/disabled in this build/);
+      expect(relay.managementSockets).toHaveLength(0);
+      expect(relay.registrations).toHaveLength(0);
 
-    const [first, second] = await Promise.all([postRemoteControl(true), postRemoteControl(true)]);
-    expect(first.code).toBe(0);
-    expect(second.code).toBe(0);
-    expect(first.data.state).toBe('on');
-    expect(second.data.state).toBe('on');
-    expect(first.data.url).toContain('/devices/');
-    expect(first.data.device_id).toBeTruthy();
-    expect(first.data.device_name).toBeTruthy();
-    expect(relay.registrations).toHaveLength(1);
-
-    const res = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
-    const fetched = (await res.json()) as Envelope<RemoteControlStatusWire>;
-    expect(fetched.data.state).toBe('on');
-
-    const stopped = await postRemoteControl(false);
-    expect(stopped.code).toBe(0);
-    expect(stopped.data.state).toBe('off');
-    expect(stopped.data.enabled).toBe(false);
-
-    const restarted = await postRemoteControl(true);
-    expect(restarted.code).toBe(0);
-    expect(restarted.data.state).toBe('on');
-
-    await writeServerToken(home as string, 'rotated-server-token');
-    const httpSocket = relay.httpSockets.at(-1)!;
-    const rotatedResponsePromise = nextJsonMessage(httpSocket);
-    httpSocket.send(
-      JSON.stringify({
-        request_id: 'request-rotated',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          'GET /api/v1/healthz HTTP/1.1\r\nHost: relay.test\r\n\r\n',
-        ).toString('base64'),
-      }),
-    );
-    const rotatedMessage = await rotatedResponsePromise;
-    const rotatedResponse = Buffer.from(
-      rotatedMessage['body_base64'] as string,
-      'base64',
-    ).toString();
-    expect(rotatedResponse).toContain('HTTP/1.1 200');
-    expect(rotatedResponse).toContain('"ok":true');
-
-    relay.managementSockets.at(-1)!.send(
-      JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
-    );
-    await waitFor(async () => {
-      const after = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
-      const body = (await after.json()) as Envelope<RemoteControlStatusWire>;
-      return body.data.state === 'off';
-    });
-
-    const reenabled = await postRemoteControl(true);
-    expect(reenabled.code).toBe(0);
-    expect(reenabled.data.state).toBe('on');
-
-    await postRemoteControl(false);
-    await relay.close();
+      const status = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+      const statusBody = (await status.json()) as Envelope<RemoteControlStatusWire>;
+      expect(statusBody.data.state).toBe('off');
+    } finally {
+      await relay.close();
+    }
   });
 
-  it('reports REMOTE_CONTROL_ALREADY_RUNNING when another live process holds the lock', async () => {
-    await mkdir(join(home as string, 'server'), { recursive: true });
-    await writeFile(
-      remoteControlLockPath(home as string),
-      JSON.stringify({
-        pid: process.pid,
-        nonce: 'other-process',
-        local_origin: 'http://127.0.0.1:58627',
-        device_id: 'other-device',
-        url: 'https://code-rc.kimi.com/devices/other-device/',
-        started_at: Date.now(),
-      }),
-    );
+  it('refuses even on a loopback bind with auth enabled, which upstream allows', async () => {
+    const body = await postRemoteControl(true);
 
-    const posted = await postRemoteControl(true);
-    expect(posted.code).toBe(ErrorCode.REMOTE_CONTROL_ALREADY_RUNNING);
-    expect(posted.msg).toContain('already running');
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('still answers a disable request so the route is not broken', async () => {
+    const body = await postRemoteControl(false);
+
+    expect(body.code).toBe(0);
+    expect(body.data.state).toBe('off');
   });
 });
 

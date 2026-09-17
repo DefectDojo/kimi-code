@@ -81,11 +81,9 @@ describe('web slash command', () => {
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
-  it('registers /remote-control and /rc as the same always-available built-in', () => {
-    const command = findBuiltInSlashCommand('remote-control');
-    expect(command).toBeDefined();
-    expect(findBuiltInSlashCommand('rc')).toBe(command);
-    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  it('does not register /remote-control or /rc: the tunnel is disabled in this fork', () => {
+    expect(findBuiltInSlashCommand('remote-control')).toBeUndefined();
+    expect(findBuiltInSlashCommand('rc')).toBeUndefined();
   });
 });
 

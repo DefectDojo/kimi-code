@@ -588,7 +588,6 @@ describe('CLI options parsing', () => {
         'acp',
         'web',
         'server',
-        'rc',
         'login',
         'doctor',
         'vis',

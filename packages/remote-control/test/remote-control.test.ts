@@ -22,6 +22,8 @@ import {
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
+  startRemoteControlTunnel,
+  RemoteControlDisabledError,
   type RemoteControlHandle,
 } from '../src/remote-control';
 import { remoteControlLockPath } from '../src/lock';
@@ -167,7 +169,7 @@ describe('Remote Control tunnel', () => {
     cleanups.push(() => closeServer(relayServer));
 
     await expect(
-      startRemoteControl({
+      startRemoteControlTunnel({
         homeDir,
         localOrigin: 'http://127.0.0.1:1',
         localServerToken: 'local-server-token',
@@ -184,7 +186,7 @@ describe('Remote Control tunnel', () => {
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
@@ -206,7 +208,7 @@ describe('Remote Control tunnel', () => {
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
@@ -233,7 +235,7 @@ describe('Remote Control tunnel', () => {
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
@@ -252,7 +254,7 @@ describe('Remote Control tunnel', () => {
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
@@ -377,7 +379,7 @@ describe('Remote Control tunnel', () => {
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
     let currentToken = 'local-server-token';
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: `http://127.0.0.1:${localPort}`,
       localServerToken: () => currentToken,
@@ -658,7 +660,7 @@ describe('Remote Control tunnel', () => {
     cleanups.push(async () => handle?.close());
     let logs = '';
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
@@ -686,7 +688,7 @@ describe('Remote Control tunnel', () => {
     cleanups.push(async () => handle?.close());
     let logs = '';
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:1',
       localServerToken: 'local-server-token',
@@ -721,7 +723,7 @@ describe('Remote Control single-instance lock', () => {
     const relay = await startAuthRelay();
     let first: RemoteControlHandle | undefined;
     cleanups.push(async () => first?.close());
-    first = await startRemoteControl({
+    first = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
@@ -731,7 +733,7 @@ describe('Remote Control single-instance lock', () => {
     });
 
     await expect(
-      startRemoteControl({
+      startRemoteControlTunnel({
         homeDir,
         localOrigin: 'http://127.0.0.1:58628',
         localServerToken: 'local-server-token',
@@ -761,7 +763,7 @@ describe('Remote Control single-instance lock', () => {
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
-    handle = await startRemoteControl({
+    handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
@@ -787,12 +789,12 @@ describe('Remote Control single-instance lock', () => {
       relayOrigin: `http://127.0.0.1:${relay.port}`,
       stderr: { write: () => true },
     };
-    const first = await startRemoteControl(options);
+    const first = await startRemoteControlTunnel(options);
     await first.close();
 
     let second: RemoteControlHandle | undefined;
     cleanups.push(async () => second?.close());
-    second = await startRemoteControl(options);
+    second = await startRemoteControlTunnel(options);
     expect(second.url).toContain('/devices/');
 
     relay.managementSockets[relay.managementSockets.length - 1]!.send(
@@ -805,7 +807,7 @@ describe('Remote Control single-instance lock', () => {
   it('does not remove a successor lock when closing', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const relay = await startAuthRelay();
-    const handle = await startRemoteControl({
+    const handle = await startRemoteControlTunnel({
       homeDir,
       localOrigin: 'http://127.0.0.1:58627',
       localServerToken: 'local-server-token',
@@ -985,3 +987,49 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+describe('remote control is disabled in this fork', () => {
+  it('refuses without opening a relay connection or reading the refresh token', async () => {
+    const homeDir = await createRemoteControlHome();
+    const relay = await startAuthRelay();
+
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:1',
+        localServerToken: 'local-server-token',
+        clientVersion: CLIENT_VERSION,
+        relayOrigin: `http://127.0.0.1:${relay.port}`,
+        stderr: { write: () => true },
+      }),
+    ).rejects.toBeInstanceOf(RemoteControlDisabledError);
+
+    expect(relay.requests).toHaveLength(0);
+  });
+
+  it('refuses before the checks that upstream fails on, so no input can satisfy it', async () => {
+    await expect(
+      startRemoteControl({
+        homeDir: join(tmpdir(), 'kimi-rc-does-not-exist'),
+        localOrigin: 'http://127.0.0.1:1',
+        localServerToken: '',
+        clientVersion: CLIENT_VERSION,
+      }),
+    ).rejects.toThrow(/disabled in this build/);
+  });
+
+  it('does not leave a machine-wide lock behind', async () => {
+    const homeDir = await createRemoteControlHome();
+
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:1',
+        localServerToken: 'local-server-token',
+        clientVersion: CLIENT_VERSION,
+      }),
+    ).rejects.toBeInstanceOf(RemoteControlDisabledError);
+
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+});

@@ -63,9 +63,9 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('resolves /remote-control and /rc as built-ins', () => {
-    expect(resolve('/rc')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
-    expect(resolve('/remote-control')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
+  it('does not resolve /remote-control or /rc: the tunnel is disabled in this fork', () => {
+    expect(resolve('/rc')).not.toMatchObject({ kind: 'builtin' });
+    expect(resolve('/remote-control')).not.toMatchObject({ kind: 'builtin' });
   });
 
   it('blocks idle-only built-ins while streaming', () => {

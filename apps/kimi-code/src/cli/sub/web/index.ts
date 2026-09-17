@@ -8,6 +8,10 @@
  * management subcommand is `web rotate-token` (rotate the home-wide bearer
  * token). Servers left behind by pre-0.28.0 builds are cleaned up with
  * `kimi server kill`.
+ *
+ * Upstream also registers `kimi rc` / `kimi remote`, which serves the same UI
+ * through the Kimi Remote Control relay. This fork does not: Remote Control is
+ * disabled, so the subcommand is not mounted.
  */
 
 import type { Command } from 'commander';
@@ -24,11 +28,4 @@ export function registerWebCommand(program: Command): void {
   );
   registerRotateTokenCommand(web);
   registerDeprecatedServerCommand(program);
-  buildWebCommand(
-    program
-      .command('rc')
-      .alias('remote')
-      .description('Run the local Kimi server and open the web UI through Remote Control.'),
-    { forceRemoteControl: true },
-  );
 }

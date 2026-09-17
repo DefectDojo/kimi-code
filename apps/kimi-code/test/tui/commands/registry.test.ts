@@ -235,11 +235,9 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
 
-  it('registers remote-control as always available', () => {
-    const command = findBuiltInSlashCommand('remote-control');
-    expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
-    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  it('does not register remote-control: the tunnel is disabled in this fork', () => {
+    expect(findBuiltInSlashCommand('remote-control')).toBeUndefined();
+    expect(findBuiltInSlashCommand('rc')).toBeUndefined();
   });
 
 });

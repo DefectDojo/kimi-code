@@ -19,6 +19,8 @@ export {
   REMOTE_CONTROL_RELAY_URL_ENV,
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
+  RemoteControlDisabledError,
+  REMOTE_CONTROL_DISABLED_MESSAGE,
   startRemoteControl,
 } from '@moonshot-ai/remote-control';
 export type {
