@@ -428,7 +428,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('emits one complete metadata event when a generated title is applied', async () => {
+  it('applies no generated title and sends no excerpt to the tools endpoint', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -507,25 +507,22 @@ key = "${titleOAuthRef.key}"
       });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
-        if (event.type === 'session.meta.updated' && event.title === 'Generated title') {
-          events.push(event);
-        }
+        if (event.type === 'session.meta.updated') events.push(event);
       });
 
-      await expect(harness.generateSessionTitle({ id: session.id })).resolves.toBe(
-        'Generated title',
-      );
+      await expect(
+        harness.generateSessionTitle({ id: session.id }),
+      ).resolves.toBeUndefined();
       unsubscribe();
 
-      expect(events).toEqual([
-        expect.objectContaining({
-          type: 'session.meta.updated',
-          sessionId: session.id,
-          agentId: 'main',
-          title: 'Generated title',
-          patch: { title: 'Generated title', isCustomTitle: false },
+      expect(events).toEqual([]);
+      expect(
+        fetchSpy.mock.calls.filter(([input]) => {
+          const url =
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+          return url.endsWith('/tools');
         }),
-      ]);
+      ).toEqual([]);
     } finally {
       await harness.close();
       fetchSpy.mockRestore();
@@ -604,12 +601,10 @@ key = "${titleOAuthRef.key}"
 
       // The cold session is temporarily resumed for generation; block its
       // cleanup close inside the will-close hooks so the public resume below
-      // lands while the close is still in flight.
-      const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
-      await fetchStarted;
+      // lands while the close is still in flight. Title generation sends
+      // nothing in this fork, so the will-close hook is registered up front
+      // rather than after an outbound request starts.
       const sessionManager = client.engineAccessor.get(ISessionManager);
-      const tempHandle = sessionManager.get('ses_title_race');
-      expect(tempHandle).toBeDefined();
       let markCloseStarted!: () => void;
       let openCloseGate!: () => void;
       const closeStarted = new Promise<void>((resolve) => {
@@ -624,12 +619,7 @@ key = "${titleOAuthRef.key}"
         event.waitUntil(closeGate);
       });
 
-      resolveFetch(
-        new Response(JSON.stringify({ title: 'Generated title' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+      const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
       await closeStarted;
 
       // The resume must queue behind the in-flight close instead of merging
@@ -643,7 +633,7 @@ key = "${titleOAuthRef.key}"
       expect(order).toEqual([]);
 
       openCloseGate();
-      await expect(titlePromise).resolves.toBe('Generated title');
+      await expect(titlePromise).resolves.toBeUndefined();
       const summary = await resumePromise;
       expect(summary.id).toBe('ses_title_race');
       expect(order).toEqual(['resumed']);

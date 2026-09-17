@@ -620,7 +620,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(generated.body.code).toBe(40923);
   });
 
-  it('generates and persists a title through the public REST path', async () => {
+  it('never sends a chat excerpt through the public REST title path', async () => {
     await server?.close();
     server = undefined;
     await writeFile(
@@ -710,46 +710,25 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(submitted.body.code).toBe(0);
     }
 
-    const generated = await postJson<{ title: string }>(
-      `/api/v1/sessions/${id}/title/generate`,
-    );
-    expect(generated.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest).toEqual({
-      method: 'chat_title',
-      params: {
-        chat_content:
-          'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-      },
-    });
+    const generated = await postJson<null>(`/api/v1/sessions/${id}/title/generate`);
+    expect(generated.body.code).toBe(40923);
+    expect(toolsRequest).toBeUndefined();
 
-    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-
-    const again = await postJson<null>(`/api/v1/sessions/${id}/title/generate`);
-    expect(again.body.code).toBe(40923);
-
-    const forced = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
+    const forced = await postJson<null>(`/api/v1/sessions/${id}/title/generate`, {
       force: true,
     });
-    expect(forced.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    expect(forced.body.code).toBe(40923);
 
-    await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, { title: 'custom title' });
-    const forcedCustom = await postJson<{ title: string }>(
-      `/api/v1/sessions/${id}/title/generate`,
-      { force: true },
-    );
-    expect(forcedCustom.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    const afterCustom = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    expect(afterCustom.body.data.title).toBe('generated from REST');
-
-    const digested = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
+    const digested = await postJson<null>(`/api/v1/sessions/${id}/title/generate`, {
       force: true,
       source: 'digest',
     });
-    expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
-    expect(toolsRequest?.params.chat_content).toBe(
-      'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
-    );
+    expect(digested.body.code).toBe(40923);
+
+    expect(toolsRequest).toBeUndefined();
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.data.title).toBe('first REST prompt');
   });
 
   it('returns session-not-found when generating a title for a missing session', async () => {

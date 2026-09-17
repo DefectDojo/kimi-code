@@ -8,7 +8,12 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchChatTitle, kimiCodeToolsUrl } from '../src/managed-tools';
+import {
+  fetchChatTitle,
+  fetchChatTitleRemote,
+  kimiCodeToolsUrl,
+  SESSION_TITLE_EGRESS_DISABLED_MESSAGE,
+} from '../src/managed-tools';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -26,7 +31,7 @@ describe('kimiCodeToolsUrl', () => {
   });
 });
 
-describe('fetchChatTitle', () => {
+describe('fetchChatTitleRemote (unreachable upstream implementation)', () => {
   it('POSTs the chat_title method with bearer auth and returns the title on 200', async () => {
     const fetchMock = vi.fn(
       async () =>
@@ -37,7 +42,7 @@ describe('fetchChatTitle', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await fetchChatTitle(
+    const result = await fetchChatTitleRemote(
       'https://api.example/tools',
       'access-token',
       'user: nil pointer 报错',
@@ -70,7 +75,7 @@ describe('fetchChatTitle', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await fetchChatTitle('https://api.example/tools', 'access-token', 'user: hi', {
+    await fetchChatTitleRemote('https://api.example/tools', 'access-token', 'user: hi', {
       headers: {
         authorization: 'Bearer wrong-token',
         aCcEpT: 'text/plain',
@@ -99,7 +104,7 @@ describe('fetchChatTitle', () => {
       ),
     );
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi');
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi');
 
     expect(result).toEqual({ kind: 'ok', title: '标题' });
   });
@@ -116,7 +121,7 @@ describe('fetchChatTitle', () => {
       ),
     );
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi');
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi');
 
     expect(result).toEqual({
       kind: 'error',
@@ -130,7 +135,7 @@ describe('fetchChatTitle', () => {
       vi.fn(async () => new Response('', { status: 401 })),
     );
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi');
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi');
 
     expect(result.kind).toBe('error');
     if (result.kind !== 'error') return;
@@ -150,7 +155,7 @@ describe('fetchChatTitle', () => {
       ),
     );
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi');
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi');
 
     expect(result).toEqual({ kind: 'error', status: 400, message: 'title rejected' });
   });
@@ -170,7 +175,7 @@ describe('fetchChatTitle', () => {
       ),
     );
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi', {
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi', {
       timeoutMs: 5,
     });
 
@@ -188,7 +193,7 @@ describe('fetchChatTitle', () => {
       }),
     );
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi');
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi');
 
     expect(result.kind).toBe('error');
     if (result.kind !== 'error') return;
@@ -216,7 +221,7 @@ describe('fetchChatTitle', () => {
     );
     const external = new AbortController();
 
-    const resultPromise = fetchChatTitle('https://api.example/tools', 'tok', 'user: hi', {
+    const resultPromise = fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi', {
       signal: external.signal,
       timeoutMs: 60_000,
     });
@@ -237,7 +242,7 @@ describe('fetchChatTitle', () => {
     const external = new AbortController();
     external.abort();
 
-    const result = await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi', {
+    const result = await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi', {
       signal: external.signal,
     });
 
@@ -261,12 +266,39 @@ describe('fetchChatTitle', () => {
     const addSpy = vi.spyOn(external.signal, 'addEventListener');
     const removeSpy = vi.spyOn(external.signal, 'removeEventListener');
 
-    await fetchChatTitle('https://api.example/tools', 'tok', 'user: hi', {
+    await fetchChatTitleRemote('https://api.example/tools', 'tok', 'user: hi', {
       signal: external.signal,
     });
 
     expect(addSpy).toHaveBeenCalledTimes(1);
     expect(removeSpy).toHaveBeenCalledTimes(1);
     expect(removeSpy.mock.calls[0]?.[1]).toBe(addSpy.mock.calls[0]?.[1]);
+  });
+});
+
+describe('session title egress is disabled in this fork', () => {
+  it('refuses without making a request', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await fetchChatTitle(
+      'https://api.example/tools',
+      'access-token',
+      'user: something private\nassistant: also private',
+    );
+
+    expect(result).toEqual({ kind: 'error', message: SESSION_TITLE_EGRESS_DISABLED_MESSAGE });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses for every caller, whatever the url or token', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    for (const url of ['https://api.kimi.com/coding/v1/tools', 'https://api.kimi.ai/coding/v1/tools']) {
+      const result = await fetchChatTitle(url, 'tok', 'user: hi');
+      expect(result.kind).toBe('error');
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

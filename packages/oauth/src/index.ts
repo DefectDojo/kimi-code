@@ -130,7 +130,11 @@ export type {
   ManagedUsageResult,
 } from './managed-usage';
 
-export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
+export {
+  fetchChatTitle,
+  kimiCodeToolsUrl,
+  SESSION_TITLE_EGRESS_DISABLED_MESSAGE,
+} from './managed-tools';
 export type {
   FetchChatTitleError,
   FetchChatTitleOk,

@@ -27,7 +27,10 @@ import {
   type TitleTurnExcerpt,
 } from '#/session/sessionTitle/agentTitlePromptSource';
 import { ISessionTitleService } from '#/session/sessionTitle/sessionTitle';
-import { SessionTitleService } from '#/session/sessionTitle/sessionTitleService';
+import {
+  composeTitleInput,
+  SessionTitleService,
+} from '#/session/sessionTitle/sessionTitleService';
 import {
   ISessionMetadata,
   type SessionMeta,
@@ -229,366 +232,152 @@ describe('SessionTitleService', () => {
     vi.unstubAllEnvs();
   });
 
-  it('replaces the easy title with the generated one', async () => {
-    titlePrompts = ['帮我看一下这个 Go 的 nil pointer 报错'];
-
-    const title = await ix.get(ISessionTitleService).generateTitle();
-
-    expect(title).toBe('生成的标题');
-    expect(metadata.meta.title).toBe('生成的标题');
-    expect(metadata.meta.titleKind).toBe('generated');
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    expect(JSON.parse(init?.body as string)).toEqual({
-      method: 'chat_title',
-      params: { chat_content: 'user: 帮我看一下这个 Go 的 nil pointer 报错' },
-    });
-    expect(new Headers(init?.headers as Record<string, string>).get('authorization')).toBe(
-      'Bearer test-token',
-    );
-
-    const rebroadcast = events.published.find(
-      (event): event is SessionMetaUpdated =>
-        event.type === 'session.meta.updated' &&
-        (event as SessionMetaUpdated).payload.patch.title === '生成的标题',
-    );
-    expect(rebroadcast).toBeDefined();
-  });
-
-  it('composes the title input from the recorded prompts in order', async () => {
-    titlePrompts = ['先帮我搭一个 Vite 项目', '加上路由', '现在配一下 ESLint'];
-
-    await ix.get(ISessionTitleService).generateTitle();
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    expect(JSON.parse(init?.body as string)).toEqual({
-      method: 'chat_title',
-      params: {
-        chat_content: 'user: 先帮我搭一个 Vite 项目\nuser: 加上路由\nuser: 现在配一下 ESLint',
-      },
-    });
-  });
-
-  it('truncates each prompt to the per-prompt budget, keeping the head', async () => {
-    titlePrompts = ['很长的输入'.repeat(400), '第二条'];
-
-    await ix.get(ISessionTitleService).generateTitle();
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    const body = JSON.parse(init?.body as string) as { params: { chat_content: string } };
-    expect(body.params.chat_content).toBe(`user: ${'很长的输入'.repeat(80)}\nuser: 第二条`);
-  });
-
-  it('returns unavailable when only a slash activation updated lastPrompt', async () => {
-    await metadata.update({ lastPrompt: '/compact' });
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('does nothing without a managed OAuth provider', async () => {
-    delete providers['managed:kimi-code'];
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('never overwrites a custom title set while generation is in flight', async () => {
-    const pendingFetch = createPendingFetch();
-    fetchMock.mockImplementationOnce(pendingFetch.fetch);
-
-    titlePrompts = ['hello'];
-    const generation = ix.get(ISessionTitleService).generateTitle();
-    await pendingFetch.started;
-    await metadata.setTitle('user 取的标题');
-    pendingFetch.resolve(
-      new Response(JSON.stringify({ title: '生成的标题' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
-
-    await expect(generation).resolves.toBeUndefined();
-    expect(metadata.meta.title).toBe('user 取的标题');
-    expect(metadata.meta.titleKind).toBe('custom');
-  });
-
-  it('skips generation when the current title was already generated', async () => {
-    await metadata.setGeneratedTitleIfUncustomized('已生成的标题');
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(metadata.meta.title).toBe('已生成的标题');
-  });
-
-  it('force regenerates an already-generated title', async () => {
-    await metadata.setGeneratedTitleIfUncustomized('已生成的标题');
-    titlePrompts = ['hello'];
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ force: true }),
-    ).resolves.toBe('生成的标题');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(metadata.meta.title).toBe('生成的标题');
-    expect(metadata.meta.titleKind).toBe('generated');
-  });
-
-  it('force overwrites a custom title and drops its custom marking', async () => {
-    await metadata.setTitle('user 取的标题');
-    titlePrompts = ['hello'];
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ force: true }),
-    ).resolves.toBe('生成的标题');
-    expect(metadata.meta.title).toBe('生成的标题');
-    expect(metadata.meta.titleKind).toBe('generated');
-  });
-
-  it('force still degrades when the backend request fails', async () => {
-    fetchMock.mockImplementationOnce(async () => new Response('', { status: 500 }));
-    await metadata.setTitle('user 取的标题');
-    titlePrompts = ['hello'];
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ force: true }),
-    ).resolves.toBeUndefined();
-    expect(metadata.meta.title).toBe('user 取的标题');
-    expect(metadata.meta.titleKind).toBe('custom');
-  });
-
-  it('first_turn composes the opening prompt with the first reply, within budget', async () => {
-    turnExcerpt = { user: '最初的问题', assistant: '第一轮的回答' };
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'first_turn' }),
-    ).resolves.toBe('生成的标题');
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    expect(JSON.parse(init?.body as string)).toEqual({
-      method: 'chat_title',
-      params: { chat_content: 'user: 最初的问题\nassistant: 第一轮的回答' },
-    });
-  });
-
-  it('first_turn is strict: no assistant reply yet means unavailable', async () => {
-    turnExcerpt = { user: '只有问题' };
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'first_turn' }),
-    ).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('first_turn truncates each segment to its budget', async () => {
-    turnExcerpt = { user: '问'.repeat(500), assistant: '答'.repeat(1000) };
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'first_turn' }),
-    ).resolves.toBe('生成的标题');
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    const content = (JSON.parse(init?.body as string) as { params: { chat_content: string } })
-      .params.chat_content;
-    expect(content).toBe(`user: ${'问'.repeat(400)}\nassistant: ${'答'.repeat(300)}`);
-  });
-
-  it('digest composes every turn as interleaved user/assistant lines', async () => {
-    digestExcerpt = {
-      turns: [
-        { user: '开场', assistant: '开场回答' },
-        { user: '最新追问', assistant: '当前进展' },
-      ],
+  function promptSource(): IAgentTitlePromptSource {
+    return {
+      _serviceBrand: undefined,
+      firstUserPrompts: (limit) => promptSourceImpl(limit),
+      firstTurnExcerpt: async () => turnExcerpt,
+      digestExcerpt: async () => digestExcerpt,
     };
+  }
 
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
-    ).resolves.toBe('生成的标题');
+  describe('session title egress is disabled in this fork', () => {
+    it('never calls the backend, whatever the source', async () => {
+      titlePrompts = ['先帮我搭一个 Vite 项目'];
+      turnExcerpt = { user: 'hello', assistant: 'hi there' };
+      digestExcerpt = { turns: [{ user: 'a', assistant: 'b' }] };
 
-    let [, init] = fetchMock.mock.calls[0]!;
-    expect(JSON.parse(init?.body as string)).toEqual({
-      method: 'chat_title',
-      params: {
-        chat_content: 'user: 开场\nassistant: 开场回答\nuser: 最新追问\nassistant: 当前进展',
-      },
+      for (const source of ['user_prompts', 'first_turn', 'digest'] as const) {
+        await expect(
+          ix.get(ISessionTitleService).generateTitle({ source }),
+        ).resolves.toBeUndefined();
+      }
+
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    fetchMock.mockClear();
-    digestExcerpt = { turns: [{ user: '开场', assistant: undefined }] };
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ force: true, source: 'digest' }),
-    ).resolves.toBe('生成的标题');
-    [, init] = fetchMock.mock.calls[0]!;
-    expect(JSON.parse(init?.body as string)).toEqual({
-      method: 'chat_title',
-      params: { chat_content: 'user: 开场' },
+    it('does not reach for an OAuth token either', async () => {
+      titlePrompts = ['hello'];
+
+      await ix.get(ISessionTitleService).generateTitle();
+
+      expect(tokenCalls).toEqual([]);
+      expect(resolvedOAuthRefs).toEqual([]);
+    });
+
+    it('refuses even when forced, and leaves a custom title intact', async () => {
+      await metadata.setTitle('我的标题');
+      titlePrompts = ['hello'];
+
+      await expect(
+        ix.get(ISessionTitleService).generateTitle({ force: true }),
+      ).resolves.toBeUndefined();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect((await metadata.read()).title).toBe('我的标题');
+    });
+
+    it('leaves the locally derived title in place', async () => {
+      await metadata.update({ title: 'Fix the parser', titleKind: 'replaceable' });
+      titlePrompts = ['Fix the parser'];
+
+      await ix.get(ISessionTitleService).generateTitle();
+
+      const current = await metadata.read();
+      expect(current.title).toBe('Fix the parser');
+      expect(current.titleKind).toBe('replaceable');
+    });
+
+    it('publishes no metadata event, since nothing changed', async () => {
+      titlePrompts = ['hello'];
+
+      await ix.get(ISessionTitleService).generateTitle();
+
+      expect(events.published).toEqual([]);
     });
   });
 
-  it('digest truncates each segment to its budget', async () => {
-    digestExcerpt = {
-      turns: [{ user: '问'.repeat(300), assistant: '答'.repeat(300) }],
-    };
+  describe('composeTitleInput', () => {
+    it('composes the title input from the recorded prompts in order', async () => {
+      titlePrompts = ['先帮我搭一个 Vite 项目', '加上路由', '现在配一下 ESLint'];
 
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
-    ).resolves.toBe('生成的标题');
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    const content = (JSON.parse(init?.body as string) as { params: { chat_content: string } })
-      .params.chat_content;
-    expect(content).toBe(`user: ${'问'.repeat(200)}\nassistant: ${'答'.repeat(200)}`);
-  });
-
-  it('digest elides the middle turns when the input exceeds the total budget', async () => {
-    digestExcerpt = {
-      turns: Array.from({ length: 30 }, (_, i) => ({
-        user: `第${i}个${'问'.repeat(180)}`,
-        assistant: `第${i}个${'答'.repeat(180)}`,
-      })),
-    };
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
-    ).resolves.toBe('生成的标题');
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    const content = (JSON.parse(init?.body as string) as { params: { chat_content: string } })
-      .params.chat_content;
-    expect(content.length).toBeLessThanOrEqual(3000);
-    expect(content.startsWith('user: 第0个')).toBe(true);
-    expect(content).toContain('\n...\n');
-    expect(content.split('\n...\n')[1]?.startsWith('user: ')).toBe(true);
-    expect(content.endsWith(`assistant: 第29个${'答'.repeat(180)}`)).toBe(true);
-  });
-
-  it('digest is unavailable when the window yields no segments at all', async () => {
-    digestExcerpt = { turns: [] };
-
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
-    ).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('keeps the current title when the backend request fails', async () => {
-    fetchMock.mockImplementationOnce(async () => new Response('', { status: 500 }));
-    titlePrompts = ['hello'];
-    await metadata.update({ title: 'hello', titleKind: 'replaceable' });
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(metadata.meta.title).toBe('hello');
-    expect(tokenCalls).toEqual([false]);
-  });
-
-  it('retries once with a force-refreshed token on a 401', async () => {
-    fetchMock.mockImplementationOnce(async () => new Response('', { status: 401 }));
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBe('生成的标题');
-    expect(metadata.meta.title).toBe('生成的标题');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(tokenCalls).toEqual([false, true]);
-  });
-
-  it('gives up when the 401 persists after the force refresh', async () => {
-    fetchMock.mockImplementation(async () => new Response('', { status: 401 }));
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(metadata.meta.title).toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(tokenCalls).toEqual([false, true]);
-  });
-
-  it('degrades when the force refresh after a 401 fails', async () => {
-    fetchMock.mockImplementationOnce(async () => new Response('', { status: 401 }));
-    forceTokenError = new OAuthUnauthorizedError('refresh rejected');
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(metadata.meta.title).toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(tokenCalls).toEqual([false, true]);
-  });
-
-  it('returns unavailable when the OAuth token is missing or revoked', async () => {
-    tokenError = new OAuthUnauthorizedError('re-login required');
-    titlePrompts = ['hello'];
-
-    const svc = ix.get(ISessionTitleService);
-    await expect(svc.generateTitle()).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('returns unavailable when OAuth token retrieval has an operational failure', async () => {
-    tokenError = new OAuthConnectionError('connection failed');
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('propagates unexpected token provider failures', async () => {
-    tokenError = new Error('unexpected failure');
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).rejects.toThrow(
-      'unexpected failure',
-    );
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('includes environment custom headers', async () => {
-    vi.stubEnv('KIMI_CODE_CUSTOM_HEADERS', 'X-Proxy-Header: from-env\n');
-    titlePrompts = ['hello'];
-
-    await ix.get(ISessionTitleService).generateTitle();
-
-    const [, init] = fetchMock.mock.calls[0]!;
-    const headers = new Headers(init?.headers as Record<string, string>);
-    expect(headers.get('x-proxy-header')).toBe('from-env');
-    expect(headers.get('user-agent')).toBe('test');
-  });
-
-  it('pairs the environment endpoint with its credential slot when it overrides persisted config', async () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://api.env.example.test/coding/v1');
-    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.env.example.test');
-    titlePrompts = ['hello'];
-
-    await ix.get(ISessionTitleService).generateTitle();
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.env.example.test/coding/v1/tools');
-    expect(resolvedOAuthRefs[0]).toMatchObject({
-      storage: 'file',
-      oauthHost: 'https://auth.env.example.test',
+      await expect(composeTitleInput(promptSource(), 'user_prompts')).resolves.toBe(
+        'user: 先帮我搭一个 Vite 项目\nuser: 加上路由\nuser: 现在配一下 ESLint',
+      );
     });
-    expect(resolvedOAuthRefs[0]?.key).not.toBe(MANAGED_PROVIDER.oauth?.key);
+
+    it('truncates each prompt to the per-prompt budget, keeping the head', async () => {
+      titlePrompts = ['很长的输入'.repeat(400), '第二条'];
+
+      await expect(composeTitleInput(promptSource(), 'user_prompts')).resolves.toBe(
+        `user: ${'很长的输入'.repeat(80)}\nuser: 第二条`,
+      );
+    });
+
+    it('first_turn composes the opening prompt with the first reply', async () => {
+      turnExcerpt = { user: '帮我修一下构建', assistant: '好的，我先看看配置' };
+
+      await expect(composeTitleInput(promptSource(), 'first_turn')).resolves.toBe(
+        'user: 帮我修一下构建\nassistant: 好的，我先看看配置',
+      );
+    });
+
+    it('first_turn is strict: no assistant reply yet means unavailable', async () => {
+      turnExcerpt = { user: '帮我修一下构建' };
+
+      await expect(composeTitleInput(promptSource(), 'first_turn')).resolves.toBeUndefined();
+    });
+
+    it('first_turn truncates each segment to its budget', async () => {
+      turnExcerpt = { user: '用'.repeat(600), assistant: '助'.repeat(600) };
+
+      await expect(composeTitleInput(promptSource(), 'first_turn')).resolves.toBe(
+        `user: ${'用'.repeat(400)}\nassistant: ${'助'.repeat(300)}`,
+      );
+    });
+
+    it('digest composes every turn as interleaved user/assistant lines', async () => {
+      digestExcerpt = {
+        turns: [
+          { user: '第一问', assistant: '第一答' },
+          { user: '第二问', assistant: '第二答' },
+        ],
+      };
+
+      await expect(composeTitleInput(promptSource(), 'digest')).resolves.toBe(
+        'user: 第一问\nassistant: 第一答\nuser: 第二问\nassistant: 第二答',
+      );
+    });
+
+    it('digest truncates each segment to its budget', async () => {
+      digestExcerpt = { turns: [{ user: '用'.repeat(400), assistant: '助'.repeat(400) }] };
+
+      await expect(composeTitleInput(promptSource(), 'digest')).resolves.toBe(
+        `user: ${'用'.repeat(200)}\nassistant: ${'助'.repeat(200)}`,
+      );
+    });
+
+    it('digest is unavailable when the window yields no segments at all', async () => {
+      digestExcerpt = { turns: [] };
+
+      await expect(composeTitleInput(promptSource(), 'digest')).resolves.toBeUndefined();
+    });
+
+    it('digest elides the middle turns when the input exceeds the total budget', async () => {
+      digestExcerpt = {
+        turns: Array.from({ length: 20 }, (_, index) => ({
+          user: `问题${String(index)}`.padEnd(200, '啊'),
+          assistant: `回答${String(index)}`.padEnd(200, '嗯'),
+        })),
+      };
+
+      const composed = await composeTitleInput(promptSource(), 'digest');
+
+      expect(composed).toBeDefined();
+      expect(composed!.length).toBeLessThanOrEqual(3000);
+      expect(composed).toContain('...');
+      expect(composed!.startsWith('user: 问题0')).toBe(true);
+    });
   });
 
-  it('shares an in-flight generation between concurrent requests', async () => {
-    const pendingFetch = createPendingFetch();
-    fetchMock.mockImplementationOnce(pendingFetch.fetch);
-
-    titlePrompts = ['hello'];
-    const first = ix.get(ISessionTitleService).generateTitle();
-    const second = ix.get(ISessionTitleService).generateTitle();
-    await pendingFetch.started;
-
-    pendingFetch.resolve(
-      new Response(JSON.stringify({ title: '生成的标题' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
-    await expect(first).resolves.toBe('生成的标题');
-    await expect(second).resolves.toBe('生成的标题');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns unavailable without calling the backend when no prompt was seen', async () => {
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });

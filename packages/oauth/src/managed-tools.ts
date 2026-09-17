@@ -30,7 +30,48 @@ export function kimiCodeToolsUrl(baseUrl?: string): string {
   return `${(baseUrl ?? kimiCodeBaseUrl()).replace(/\/+$/, '')}/tools`;
 }
 
+/**
+ * Session-title generation is disabled in this fork.
+ *
+ * `chat_title` posts an excerpt of the conversation — the user's prompt and
+ * the assistant's reply — to the managed platform purely to produce a display
+ * string for the session list. It is the only call in the product that sends
+ * conversation content anywhere other than the configured model provider, so
+ * with a third-party model backend it is a second, unrelated destination for
+ * the same text.
+ *
+ * Upstream gated this behind an `auto_session_title` experimental flag. That
+ * flag no longer exists anywhere in the tree, and the bundled web UI fires the
+ * request unprompted on the first turn, so there is nothing left to turn off.
+ *
+ * Nothing is lost by refusing. `applyPromptMetadataUpdate` already sets a
+ * `replaceable` title locally from the first prompt, via
+ * `titleFromPromptMetadataText`, and that text is run through the secret
+ * redactor first. Sessions stay titled; the title is a truncated prompt rather
+ * than a generated phrase.
+ *
+ * This is the chokepoint: it is the only function that sends `chat_title`, so
+ * refusing here also covers any caller a later upstream merge introduces.
+ */
+export const SESSION_TITLE_EGRESS_DISABLED_MESSAGE =
+  'Session-title generation is disabled in this build: it would send a conversation ' +
+  'excerpt to the managed platform. Sessions are titled locally from the first prompt.';
+
 export async function fetchChatTitle(
+  _url: string,
+  _accessToken: string,
+  _chatContent: string,
+  _opts: { timeoutMs?: number; headers?: Record<string, string>; signal?: AbortSignal } = {},
+): Promise<FetchChatTitleResult> {
+  return { kind: 'error', message: SESSION_TITLE_EGRESS_DISABLED_MESSAGE };
+}
+
+/**
+ * Upstream's implementation, unchanged and unreachable in this fork. Kept so
+ * upstream's own tests keep running against it and upstream changes still
+ * merge cleanly rather than conflicting against a deleted function.
+ */
+export async function fetchChatTitleRemote(
   url: string,
   accessToken: string,
   chatContent: string,

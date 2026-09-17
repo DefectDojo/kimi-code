@@ -3,6 +3,7 @@ import {
   OAuthError,
   fetchChatTitle,
   kimiCodeToolsUrl,
+  SESSION_TITLE_EGRESS_DISABLED_MESSAGE,
   parseKimiCodeCustomHeaders,
   resolveKimiCodeRuntimeAuth,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -88,6 +89,14 @@ export class SessionTitleService implements ISessionTitleService {
   }
 
   private async generateAndApply(
+    _chatContent: string,
+    _force: boolean,
+  ): Promise<string | undefined> {
+    this.log.debug(SESSION_TITLE_EGRESS_DISABLED_MESSAGE);
+    return undefined;
+  }
+
+  private async generateAndApplyRemote(
     chatContent: string,
     force: boolean,
   ): Promise<string | undefined> {
@@ -166,7 +175,7 @@ function titleInputFromPrompts(prompts: readonly string[]): string | undefined {
     .slice(0, MAX_TITLE_INPUT_LENGTH);
 }
 
-async function composeTitleInput(
+export async function composeTitleInput(
   promptSource: IAgentTitlePromptSource,
   source: SessionTitleSource,
 ): Promise<string | undefined> {
