@@ -602,9 +602,6 @@ async function handleBuiltInSlashCommand(
     case 'desktop':
       await handleDesktopCommand(host);
       return;
-    case 'remote-control':
-      await handleRemoteControlCommand(host);
-      return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);
       return;

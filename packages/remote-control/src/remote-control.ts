@@ -269,7 +269,58 @@ function requestMatchesETag(
   return false;
 }
 
+/**
+ * Remote Control is disabled in this fork.
+ *
+ * The tunnel registers the machine with a Moonshot-operated relay and forwards
+ * public-internet traffic into the local server. That server has the terminal
+ * API enabled, because it is only reachable on a loopback bind and the tunnel
+ * requires one, so a caller the relay lets through can run shell commands,
+ * read and write files, and answer the agent's own approval prompts. The
+ * client does no local authorization: it strips the caller's credentials and
+ * injects the local server token, so the bearer, Host and Origin checks pass
+ * by construction rather than by decision.
+ *
+ * Relay authentication also uses the long-lived Kimi *refresh* token, carried
+ * as a WebSocket subprotocol value where intermediaries log it far more
+ * readily than an Authorization header, and re-sent on every reconnect.
+ *
+ * This function is the single chokepoint: the CLI (`kimi rc`), the TUI (`/rc`)
+ * and the server route (`POST /api/v1/remote-control`) all start a tunnel
+ * through here, so the refusal also covers any caller a later upstream merge
+ * introduces.
+ *
+ * There is deliberately no environment escape hatch. An env variable would
+ * re-enable a public tunnel from exactly the contexts where the environment is
+ * least trustworthy. Re-enabling is a source change, reviewed as one.
+ */
+export const REMOTE_CONTROL_DISABLED_MESSAGE =
+  'Remote Control is disabled in this build. It exposes this machine through a ' +
+  'third-party relay and grants whoever reaches it the local terminal, file and ' +
+  'approval APIs. To use the web UI locally, run `kimi web`.';
+
+export class RemoteControlDisabledError extends Error {
+  constructor() {
+    super(REMOTE_CONTROL_DISABLED_MESSAGE);
+    this.name = 'RemoteControlDisabledError';
+  }
+}
+
 export async function startRemoteControl(
+  _options: RemoteControlOptions,
+): Promise<RemoteControlHandle> {
+  throw new RemoteControlDisabledError();
+}
+
+/**
+ * Upstream's tunnel implementation, unchanged and unreachable in this fork.
+ *
+ * It is kept so upstream's own tests (header blocklist, absolute-URI
+ * rejection, reconnect behaviour) keep running against it, and so upstream
+ * changes to the tunnel still merge cleanly rather than landing as a conflict
+ * against a deleted function.
+ */
+export async function startRemoteControlTunnel(
   options: RemoteControlOptions,
 ): Promise<RemoteControlHandle> {
   const localServerToken =

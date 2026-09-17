@@ -321,3 +321,25 @@ rationale. Line numbers are from the commit that introduced the note and will dr
 
 > Auto mode no longer blanket-approves Bash; these hook-flow tests are
 > about hook ordering, so opt in explicitly rather than gate on approval.
+
+### `packages/remote-control/src/remote-control.ts`
+
+**`export async function startRemoteControl(`**
+
+> Remote Control is disabled in this fork.
+>
+> The tunnel registers the machine with a Moonshot-operated relay and forwards public-internet traffic into the local kap-server. That server has the terminal API enabled, because it is only reachable on a loopback bind and the tunnel requires one, so a caller the relay lets through can run shell commands, read and write files, and answer the agent's own approval prompts.
+>
+> The client performs no local authorization. It strips the caller's `Authorization`, `Cookie`, `Host` and `Origin`, then injects the local server token and Host, so kap-server's bearer, Host and Origin checks pass by construction rather than by decision. The entire trust boundary is the relay operator's account check.
+>
+> Relay authentication uses the long-lived Kimi *refresh* token, not an access token, carried as a WebSocket subprotocol value where proxies and CDNs log it far more readily than an `Authorization` header, and re-sent on every reconnect.
+>
+> `startRemoteControl` is the single chokepoint: the CLI (`kimi rc`), the TUI (`/rc`) and the server route (`POST /api/v1/remote-control`) all start a tunnel through it, so refusing there also covers any caller a later upstream merge introduces. Upstream's implementation is kept as `startRemoteControlTunnel`, unreachable, so upstream's own tunnel tests keep running and upstream changes still merge cleanly.
+>
+> There is deliberately no environment escape hatch. An env variable would re-enable a public tunnel from exactly the contexts where the environment is least trustworthy.
+
+### `packages/kap-server/src/start.ts`
+
+**`staticEnableError: REMOTE_CONTROL_DISABLED_MESSAGE,`**
+
+> Upstream sets this only for a non-loopback bind or `--dangerous-bypass-auth`, which leaves `POST /api/v1/remote-control {"enabled":true}` working for a plain `kimi web`: anything holding the local server token could start a public tunnel with no terminal interaction and no second confirmation. Making it unconditional turns that route into a clean refusal.

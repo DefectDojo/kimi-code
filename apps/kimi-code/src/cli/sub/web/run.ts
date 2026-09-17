@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
-import { type Command, Option } from 'commander';
+import type { Command } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
@@ -40,6 +40,7 @@ import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
+  RemoteControlDisabledError,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -118,11 +119,7 @@ export function buildWebUrl(origin: string, token: string): string {
 }
 
 /** Build the `web` command, mounting the runner action on `cmd` itself. */
-export function buildWebCommand(
-  cmd: Command,
-  opts: { forceRemoteControl?: boolean } = {},
-): Command {
-  const forceRemoteControl = opts.forceRemoteControl === true;
+export function buildWebCommand(cmd: Command): Command {
   const withServerOptions = cmd
     .option(
       '--port <port>',
@@ -165,21 +162,11 @@ export function buildWebCommand(
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
     );
-  if (!forceRemoteControl) {
-    withServerOptions.addOption(
-      new Option(
-        '--rc, --remote-control',
-        'Expose the web UI through Kimi Remote Control.',
-      ).default(false),
-    );
-  }
   return withServerOptions
     .option('--no-open', 'Do not open the web UI in the default browser.', true)
     .action(async (opts: WebCliOptions) => {
       try {
-        await handleWebCommand(
-          forceRemoteControl ? { ...opts, remoteControl: true } : opts,
-        );
+        await handleWebCommand(opts);
       } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);
@@ -191,13 +178,10 @@ export async function handleWebCommand(
   opts: WebCliOptions,
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
+  if (opts.remoteControl === true) {
+    throw new RemoteControlDisabledError();
+  }
   const parsed = parseServerOptions(opts);
-  if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
-    throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
-  }
-  if (opts.remoteControl === true && !isLoopbackHost(parsed.host)) {
-    throw new Error('--remote-control requires a loopback host.');
-  }
   const run = deps.startServerForeground ?? startServerForeground;
   let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {

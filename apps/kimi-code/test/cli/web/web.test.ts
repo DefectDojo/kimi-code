@@ -105,8 +105,7 @@ describe('kimi web', () => {
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
     expect(longs).toContain('--web-title');
-    const remoteControl = web!.options.find((option) => option.long === '--remote-control');
-    expect(remoteControl?.short).toBe('--rc');
+    expect(longs).not.toContain('--remote-control');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -442,77 +441,45 @@ describe('`kimi web` opens the browser', () => {
     expect(openUrl).not.toHaveBeenCalled();
   });
 
-  it('maps --remote-control and --rc to the same option', () => {
+  it('does not accept --remote-control or --rc', () => {
     for (const flag of ['--remote-control', '--rc']) {
       const program = makeProgram();
       const web = program.commands.find((command) => command.name() === 'web')!;
-      web.parseOptions([flag]);
-      expect(web.opts()).toMatchObject({ remoteControl: true });
+      expect(web.parseOptions([flag]).unknown).toContain(flag);
+      expect(web.opts()).not.toMatchObject({ remoteControl: true });
     }
   });
 
-  it('rejects Remote Control on a non-loopback host', async () => {
+  it('refuses Remote Control even on a loopback host, which upstream allows', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const { runner } = makeRunner();
+    const { runner, calls } = makeRunner();
     const { stdout, stderr } = makeIo();
 
     await expect(
       handleWebCommand(
-        { remoteControl: true, host: '0.0.0.0', open: false },
+        { remoteControl: true, host: '127.0.0.1', open: false },
         { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
       ),
-    ).rejects.toThrow('--remote-control requires a loopback host.');
+    ).rejects.toThrow(/disabled in this build/);
+    expect(calls.options).toBeUndefined();
   });
 
-  it('shows --remote-control in help', () => {
-    const remoteControlOption = makeProgram()
+  it('does not mention Remote Control in help', () => {
+    const help = makeProgram()
       .commands.find((command) => command.name() === 'web')!
-      .options.find((option) => option.long === '--remote-control');
-    expect(remoteControlOption?.hidden).toBeFalsy();
+      .helpInformation();
+    expect(help).not.toContain('--remote-control');
+    expect(help).not.toContain('Remote Control');
   });
 });
 
 describe('kimi rc', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('registers `rc` with the `remote` alias and the web server options, without a --remote-control flag', () => {
+  it('is not registered: Remote Control is disabled in this fork', () => {
     const program = makeProgram();
-    const rc = program.commands.find((c) => c.name() === 'rc');
-    expect(rc).toBeDefined();
-    expect(rc!.alias()).toBe('remote');
-    const longs = rc!.options.map((o) => o.long).filter(Boolean);
-    expect(longs).toContain('--port');
-    expect(longs).toContain('--host');
-    expect(longs).toContain('--no-open');
-    expect(longs).not.toContain('--remote-control');
-  });
 
-  it('shows `rc` in help', () => {
-    expect(makeProgram().helpInformation()).toContain('rc|remote');
-  });
-
-  it('forces Remote Control for both `rc` and `remote`', async () => {
-    for (const name of ['rc', 'remote']) {
-      const program = makeProgram();
-      let stderr = '';
-      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-        stderr += String(chunk);
-        return true;
-      });
-      const exitSpy = vi
-        .spyOn(process, 'exit')
-        .mockImplementation(() => undefined as never);
-      try {
-        await program.parseAsync(['node', 'kimi', name, '--host', '0.0.0.0']);
-      } finally {
-        errSpy.mockRestore();
-        exitSpy.mockRestore();
-      }
-      // The loopback check only runs when remoteControl was forced on.
-      expect(stderr).toContain('--remote-control requires a loopback host.');
-    }
+    expect(program.commands.find((c) => c.name() === 'rc')).toBeUndefined();
+    expect(program.commands.find((c) => c.aliases().includes('remote'))).toBeUndefined();
+    expect(program.helpInformation()).not.toContain('rc|remote');
   });
 });
 

@@ -83,7 +83,10 @@ import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
-import { createRemoteControlManager } from '@moonshot-ai/remote-control';
+import {
+  createRemoteControlManager,
+  REMOTE_CONTROL_DISABLED_MESSAGE,
+} from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
 import { createCredentialValidator } from './services/auth/credentials';
@@ -455,12 +458,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     remoteControl: {
       service: remoteControlManager,
-      staticEnableError:
-        exposureClass !== 'loopback'
-          ? 'Remote Control requires a loopback host.'
-          : opts.disableAuth === true
-            ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
-            : undefined,
+      staticEnableError: REMOTE_CONTROL_DISABLED_MESSAGE,
     },
     onShutdown: () => {
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
