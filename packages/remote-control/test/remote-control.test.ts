@@ -990,7 +990,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
 
 describe('remote control is disabled in this fork', () => {
   it('refuses without opening a relay connection or reading the refresh token', async () => {
-    const homeDir = await createRemoteControlHome();
+    const homeDir = await createRemoteControlHome('refresh-token');
     const relay = await startAuthRelay();
 
     await expect(
@@ -1019,7 +1019,7 @@ describe('remote control is disabled in this fork', () => {
   });
 
   it('does not leave a machine-wide lock behind', async () => {
-    const homeDir = await createRemoteControlHome();
+    const homeDir = await createRemoteControlHome('refresh-token');
 
     await expect(
       startRemoteControl({
