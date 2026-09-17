@@ -422,6 +422,20 @@ describe('FileMentionProvider', () => {
     expect(values.some((value) => value.startsWith('@.git'))).toBe(false);
   });
 
+  it('uses the filesystem fallback for an unclosed quoted @ mention', async () => {
+    mkdirSync(join(workDir, 'actions'));
+    mkdirSync(join(workDir, 'activity'));
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+
+    const result = await provider.getSuggestions(['@"ac'], 0, 4, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@"ac');
+    expect(result!.items.map((item) => item.value)).toEqual(
+      expect.arrayContaining(['@"actions/"', '@"activity/"']),
+    );
+  });
+
   it('filesystem fallback quotes paths with spaces', async () => {
     mkdirSync(join(workDir, 'my folder'));
     const provider = new FileMentionProvider([], workDir, NO_FD);
@@ -476,6 +490,184 @@ describe('FileMentionProvider', () => {
       '@sr',
     );
     expect(dir.lines[0]).toBe('hey @src/');
+  });
+
+  it('does not recut a path item just because the cursor is on an @ token', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const result = provider.applyCompletion(
+      ['@'],
+      0,
+      1,
+      { value: 'README.md', label: 'README.md' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('@README.md');
+  });
+
+  it('does not recut a stale @-named path item after the user types @', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const result = provider.applyCompletion(
+      ['@'],
+      0,
+      1,
+      { value: '@scope/', label: '@scope/' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('@@scope/');
+  });
+
+  it('still applies path completion for a directory whose name starts with @', () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const line = 'cd ';
+    const result = provider.applyCompletion(
+      [line],
+      0,
+      line.length,
+      { value: '@scope/', label: '@scope/' },
+      '',
+    );
+
+    expect(result.lines[0]).toBe('cd @scope/');
+  });
+
+  describe('applyCompletion live @ token', () => {
+    const selectedDir = {
+      value: '@/mnt/e/mlbb-android-2.1.46.1156.1_HB/',
+      label: 'mlbb-android-2.1.46.1156.1_HB/',
+    };
+
+    it('replaces the live @ token when the cached prefix is a stale shorter query', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = ' @/mnt/e/mlbb-simple-android-trunk';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe(' @/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+      expect(result.cursorCol).toBe(' @/mnt/e/mlbb-android-2.1.46.1156.1_HB/'.length);
+    });
+
+    it('replaces the live @ token when the cached prefix is longer than the current token', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-android-trunk',
+      );
+
+      expect(result.lines[0]).toBe('@/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('replaces the live @ token when the cached prefix is a suffix of a path that contains @', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@packages/@';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@src/', label: 'src/' },
+        '@',
+      );
+
+      expect(result.lines[0]).toBe('@src/');
+    });
+
+    it('replaces only the current @ token when earlier text is present', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = 'see @a @/mnt/e/mlbb-simple-android-trunk';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe('see @a @/mnt/e/mlbb-android-2.1.46.1156.1_HB/');
+    });
+
+    it('does not splice when the cursor has already left the @ token', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@/mnt/e/mlbb-simple-and ';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        selectedDir,
+        '@/mnt/e/mlbb-simple-and',
+      );
+
+      expect(result.lines[0]).toBe(line);
+      expect(result.cursorCol).toBe(line.length);
+    });
+
+    it('replaces an unclosed quoted @ token when the cached prefix is stale', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@"actions/"', label: 'actions/' },
+        '@"a',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('quotes a stale unquoted mention item when the live token is quoted', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac"';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        4,
+        { value: '@actions/', label: 'actions/' },
+        '@ac',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('consumes the closing quote after the cursor for a quoted fallback item', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"ac"';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        4,
+        { value: '@"actions/"', label: 'actions/' },
+        '@"ac',
+      );
+
+      expect(result.lines[0]).toBe('@"actions/"');
+      expect(result.cursorCol).toBe('@"actions/'.length);
+    });
+
+    it('replaces a quoted @ token that contains spaces when the cached prefix is stale', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD);
+      const line = '@"my folder/te';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: '@"my folder/test.txt"', label: 'test.txt' },
+        '@"my',
+      );
+
+      expect(result.lines[0]).toBe('@"my folder/test.txt" ');
+    });
   });
 
   describe('bash-mode path completion dotfile filtering', () => {
@@ -638,6 +830,145 @@ describe('FileMentionProvider', () => {
 
       expect(getArgumentCompletions).toHaveBeenCalled();
       expect(result?.items.map((item) => item.label)).toContain('shared/');
+    });
+  });
+
+  describe('inline skill completion', () => {
+    const REVIEW_COMMAND = {
+      name: 'skill:review',
+      aliases: [],
+      description: 'Review changes',
+    };
+    const SECURITY_COMMAND = {
+      name: 'skill:security',
+      aliases: [],
+      description: 'Check security',
+    };
+    const SKILL_NAMES = new Set(['skill:review', 'skill:security']);
+
+    function skillProvider(
+      commands: ConstructorParameters<typeof FileMentionProvider>[0] = [
+        REVIEW_COMMAND,
+        SECURITY_COMMAND,
+        HELP_COMMAND,
+      ],
+    ) {
+      return new FileMentionProvider(
+        commands,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_NAMES,
+      );
+    }
+
+    it('offers skill-only suggestions for a `/` after whitespace mid-input', async () => {
+      const provider = skillProvider();
+      const line = 'hello /';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/');
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
+        'skill:review',
+        'skill:security',
+      ]);
+    });
+
+    it('filters inline suggestions by the typed prefix', async () => {
+      const provider = skillProvider();
+      const line = 'hello /rev';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers the skill picker for a `/` at the start of a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value).toSorted()).toEqual([
+        'skill:review',
+        'skill:security',
+      ]);
+    });
+
+    it('stays in skill-only mode while typing a token on a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/rev'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills on an indented later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '  /skill:rev'], 1, 12, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills for an indented token on the first line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['  /skill:rev'], 0, 12, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('does not leak built-in commands onto later lines', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/hel'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result?.items.map((item) => item.value) ?? []).not.toContain('help');
+    });
+
+    it('returns null for a prose slash when no skills are registered', async () => {
+      const provider = new FileMentionProvider([HELP_COMMAND], workDir, NO_FD, [], () => 'prompt');
+      const line = 'hello /';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+      expect(result).toBeNull();
+    });
+
+    it('keeps slash-command argument completions ahead of inline skills', async () => {
+      const provider = skillProvider([ADD_DIR_COMMAND, REVIEW_COMMAND]);
+      const line = '/add-dir /';
+      const result = await provider.getSuggestions([line], 0, line.length, {
+        signal: ctrl(),
+        force: false,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value)).toEqual(['/tmp/shared/']);
+    });
+
+    it('applyCompletion preserves the slash and appends a trailing space', () => {
+      const provider = skillProvider();
+      const line = 'hello /rev';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+
+      expect(result.lines[0]).toBe('hello /skill:review ');
+      expect(result.cursorCol).toBe('hello /skill:review '.length);
     });
   });
 });

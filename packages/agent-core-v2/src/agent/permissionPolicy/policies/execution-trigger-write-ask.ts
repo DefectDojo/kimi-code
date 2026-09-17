@@ -12,16 +12,6 @@ import type {
 
 import { writeFileAccesses } from './path-utils';
 
-/**
- * Files whose contents a routine follow-up command executes.
- *
- * Writes inside the workspace are otherwise approved without asking, which is
- * the right default for source files: editing them is the job, and the change
- * is visible in the diff before anything runs it. These are different. Nothing
- * happens when they are written, and then the next `npm install`, test run, or
- * CI job executes what they now say — so the write is the dangerous act and
- * the prompt has to happen there, not at the point it finally runs.
- */
 const EXECUTION_TRIGGER_BASENAMES = new Set<string>([
   'package.json',
   'makefile',
@@ -37,10 +27,6 @@ const EXECUTION_TRIGGER_BASENAMES = new Set<string>([
   'azure-pipelines.yml',
 ]);
 
-/**
- * Directories where every file is executed by CI or a git operation.
- * Compared against workspace-relative POSIX paths.
- */
 const EXECUTION_TRIGGER_DIR_PREFIXES = [
   '.github/workflows/',
   '.github/actions/',
@@ -55,15 +41,6 @@ export function isExecutionTriggerPath(relativePath: string): boolean {
   return EXECUTION_TRIGGER_DIR_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
-/**
- * Ask before writing a file that a later command will execute.
- *
- * Sits ahead of the blanket in-workspace write approval, and ahead of auto
- * mode, for the same reason the sensitive-file check does: these are the
- * writes where "it was inside the repo" is not a good enough reason to skip
- * the prompt. Session history and user `allow` rules still take precedence,
- * so an operator who has decided this is fine is not asked twice.
- */
 export class ExecutionTriggerWriteAskPermissionPolicyService implements PermissionPolicy {
   readonly name = 'execution-trigger-write-ask';
 

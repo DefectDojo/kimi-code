@@ -9,8 +9,8 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
-import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
-import { IQueryStore } from '#/persistence/interface/queryStore';
+import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { IQueryStore, QueryStoreRebuiltError } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
 
@@ -36,6 +36,7 @@ describe('MiniDbQueryStore', () => {
   afterEach(async () => {
     disposeHost?.();
     disposeHost = undefined;
+    await drainQueryStoreDisposals();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
@@ -113,23 +114,29 @@ describe('MiniDbQueryStore', () => {
     expect(page2.nextCursor).toBeUndefined();
   });
 
-  it('ensureIndex is idempotent across value, compound and text kinds', async () => {
+  it('ensureIndex is idempotent across value and compound kinds', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', ws: 'x', n: 1, body: 'hello world' });
     await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
     await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
     await store.ensureIndex(COLLECTION, { kind: 'compound', name: 'byWsN', groupBy: 'ws', orderBy: 'n' });
-    await store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] });
-    await store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] });
+    await store.ensureIndex(COLLECTION, { kind: 'compound', name: 'byWsN', groupBy: 'ws', orderBy: 'n' });
     const page = await store.query(COLLECTION).where({ ws: 'x' }).execute();
     expect(page.items).toHaveLength(1);
   });
 
-  it('stores checkpoints', async () => {
+  it('rejects text indexes: the query-store is a structural read model', async () => {
     const store = build();
-    expect(await store.getCheckpoint('wire:abc')).toBeUndefined();
-    await store.setCheckpoint('wire:abc', { seq: 42 });
-    expect(await store.getCheckpoint('wire:abc')).toEqual({ seq: 42 });
+    await store.put(COLLECTION, 'a', { id: 'a', body: 'hello world' });
+    await expect(
+      store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
+    ).rejects.toThrow(/structural read model/);
+    await expect(
+      store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
+    ).rejects.toThrow(/structural read model/);
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const shardEntries = await fsp.readdir(join(storeDir, 'shard-00'));
+    expect(shardEntries.filter((name) => name.includes('text'))).toEqual([]);
   });
 
   it('shares the store with a second cluster instance instead of locking it out', async () => {
@@ -159,25 +166,68 @@ describe('MiniDbQueryStore', () => {
     await fsp.writeFile(registryFile, '{ definitely not valid json');
 
     const second = build();
-    await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
+    await expect(
+      second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' }),
+    ).rejects.toThrow(SyntaxError);
     expect(await second.get(COLLECTION, 'a')).toBeUndefined();
+    await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
     await second.put(COLLECTION, 'b', { id: 'b', v: 2 });
     const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 2 }).execute();
     expect(page.items).toEqual([{ id: 'b', v: 2 }]);
   });
 
-  it('opens a 16-shard cluster under the cache dir', async () => {
+  it('wipes and rebuilds the store after poison-class or persistent transient failures', async () => {
     const store = build();
-    await store.put(COLLECTION, 'a', { id: 'a' });
-    const storeDir = join(homeDir, 'cache', 'query-store');
-    const meta = JSON.parse(await fsp.readFile(join(storeDir, 'cluster.meta.json'), 'utf8')) as {
-      shardCount: number;
-    };
-    expect(meta.shardCount).toBe(16);
-    const entries = await fsp.readdir(storeDir);
-    for (let i = 0; i < 16; i++) {
-      expect(entries).toContain(`shard-${String(i).padStart(2, '0')}`);
+    await store.put(COLLECTION, 'a', { id: 'a', v: 1 });
+    const internal = store as unknown as { dbPromise: Promise<ClusterDb> };
+    const db = await internal.dbPromise;
+    const poisoned = Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' });
+    (db as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await expect(store.put(COLLECTION, 'b', { id: 'b', v: 2 })).rejects.toThrow('poisoned');
+    expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+    await store.put(COLLECTION, 'b', { id: 'b', v: 2 });
+    expect(await store.get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
+
+    const db2 = await internal.dbPromise;
+    const locked = Object.assign(new Error('locked'), { code: 'ELOCKED' });
+    (db2 as unknown as { set: unknown }).set = () => Promise.reject(locked);
+    for (let i = 0; i < 4; i++) {
+      await expect(store.put(COLLECTION, `t${i}`, { v: i })).rejects.toThrow('locked');
+      expect(await store.get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
     }
+    await expect(store.put(COLLECTION, 'c', { id: 'c', v: 3 })).rejects.toThrow('locked');
+    expect(await store.get(COLLECTION, 'b')).toBeUndefined();
+    await store.put(COLLECTION, 'c', { id: 'c', v: 3 });
+    expect(await store.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
+
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const peer = await ClusterDb.open({ dir: storeDir, shardCount: 16, valueCodec: 'json', lockHoldMs: 0 });
+    await peer.set(`${COLLECTION}${SEP}peer`, { id: 'peer', v: 9 });
+    const db3 = await internal.dbPromise;
+    (db3 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await expect(store.put(COLLECTION, 'd', { v: 4 })).rejects.toThrow('poisoned');
+    expect(await peer.get(`${COLLECTION}${SEP}peer`)).toEqual({ id: 'peer', v: 9 });
+    expect(await store.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
+
+    const db4 = await internal.dbPromise;
+    (db4 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await peer.close();
+    await expect(store.put(COLLECTION, 'd', { v: 4 })).rejects.toThrow('poisoned');
+    expect(await store.get(COLLECTION, 'c')).toBeUndefined();
+    await store.put(COLLECTION, 'd', { v: 4 });
+    expect(await store.get(COLLECTION, 'd')).toEqual({ v: 4 });
+
+    const epoch = store.storeEpoch();
+    const db5 = await internal.dbPromise;
+    (db5 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await expect(store.put(COLLECTION, 'e', { v: 5 })).rejects.toThrow('poisoned');
+    expect(store.storeEpoch()).toBe(epoch + 1);
+    await expect(store.setCheckpoint('projection', { seq: 7 }, epoch)).rejects.toThrow(
+      QueryStoreRebuiltError,
+    );
+    expect(await store.getCheckpoint('projection')).toBeUndefined();
+    await store.setCheckpoint('projection', { seq: 7 }, store.storeEpoch());
+    expect(await store.getCheckpoint('projection')).toEqual({ seq: 7 });
   });
 
   it('getMany returns present values and skips missing keys', async () => {
@@ -273,8 +323,6 @@ describe('MiniDbQueryStore', () => {
     console.log(
       `[baseline] queryStore pageByColumn ${JSON.stringify({ rows: [1000, 10000], medianMs: [small, large] })}`,
     );
-    // 10x the rows must not cost 10x the time: the ordered-column walk is
-    // O(log N + limit), not a full scan.
     expect(large).toBeLessThan(small * 10 + 100);
   }, 60_000);
 

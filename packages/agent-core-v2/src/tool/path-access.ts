@@ -1,25 +1,10 @@
-/**
- * `tool` domain — workspace path access policy for file tools.
- *
- * Owns `WorkspaceConfig` (the roots tools are allowed to access, injected
- * through each tool's constructor), the lexical path guards used by
- * Read/Write/Edit/Grep/Glob — canonicalization, workspace containment,
- * sensitive-file detection (env / credential / SSH key patterns with
- * explicit exemptions like `.env.example`) — and `PathSecurityError`.
- * `extendWorkspaceWithSkillRoots` merges skill-catalog roots into a tool
- * workspace so skill directories outside the cwd (e.g. `~/.kimi-code/skills`)
- * stay reachable.
- * Canonicalization is **lexical** only (no `realpath` / symlink following).
- * The guard stays host-aware: callers pass the active `IHostEnvironment`
- * path class so SSH paths stay POSIX even when the host Node process is
- * running on Windows. Shared-prefix escapes (a path like `/workspace-evil`
- * passing a naive `startswith('/workspace')` check) are blocked by
- * requiring a path separator (or exact equality) after the base prefix in
- * `isWithinDirectory`. Pure policy; no scoped service.
- */
-
 import * as pathe from 'pathe';
 
+import {
+  getShellPathBridge,
+  translateShellDrivePath,
+  type ShellPathBridge,
+} from '#/_base/execEnv/shellPathBridge';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 
 export interface WorkspaceConfig {
@@ -49,12 +34,6 @@ const SENSITIVE_PATH_SUFFIXES = [
   ['.kimi-code', 'config.toml'],
 ];
 
-/**
- * Directories whose contents are credentials whatever the file is called.
- * Private keys and cloud credential files are routinely given local names
- * (`deploy_key`, `work-cluster.json`), so a basename list cannot cover them.
- * Public keys and the host-key caches carry no secret and stay readable.
- */
 const SENSITIVE_DIRECTORY_SEGMENTS: readonly (readonly string[])[] = [
   ['.ssh'],
   ['.gnupg'],
@@ -70,10 +49,6 @@ const SENSITIVE_DIRECTORY_EXEMPT_BASENAMES = new Set<string>([
   'known_hosts.old',
 ]);
 
-/**
- * `config` is a secret in `.kube` but not in `.ssh` (host aliases) or `.aws`
- * (region settings), so the exemption is per-directory rather than by name.
- */
 const SENSITIVE_DIRECTORY_EXEMPT_SUFFIXES = ['.ssh/config', '.aws/config'];
 
 const ENV_PREFIX = '.env.';
@@ -185,29 +160,7 @@ function isWin32DriveRelative(path: string): boolean {
 }
 
 export function normalizeUserPath(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): string {
-  if (pathClass !== 'win32') return path;
-
-  if (path === '/') return '/';
-
-  if (path.startsWith('//')) {
-    return path;
-  }
-
-  const cygdriveMatch = /^\/cygdrive\/([A-Za-z])(?:\/|$)/.exec(path);
-  if (cygdriveMatch !== null) {
-    const drive = cygdriveMatch[1]!.toUpperCase();
-    const rest = path.slice(`/cygdrive/${cygdriveMatch[1]!}`.length);
-    return `${drive}:${rest === '' ? '/' : rest}`;
-  }
-
-  const driveMatch = /^\/([A-Za-z])(?:\/|$)/.exec(path);
-  if (driveMatch !== null) {
-    const drive = driveMatch[1]!.toUpperCase();
-    const rest = path.slice(2);
-    return `${drive}:${rest === '' ? '/' : rest}`;
-  }
-
-  return path;
+  return pathClass === 'win32' ? translateShellDrivePath(path) : path;
 }
 
 function expandUserPath(path: string, homeDir: string | undefined, pathClass: PathClass): string {
@@ -300,10 +253,14 @@ export interface ResolvePathAccessOptions {
   readonly policy?: WorkspaceAccessPolicy | undefined;
   readonly pathClass?: PathClass | undefined;
   readonly homeDir?: string;
+  readonly shellPathBridge?: ShellPathBridge;
 }
 
 export interface ResolvePathAccessPathOptions {
-  readonly env: Pick<IHostEnvironment, 'pathClass' | 'homeDir'>;
+  readonly env: Pick<
+    IHostEnvironment,
+    'pathClass' | 'homeDir' | 'osKind' | 'shellName' | 'shellPath'
+  >;
   readonly workspace: WorkspaceConfig;
   readonly operation: PathAccessOperation;
   readonly policy?: WorkspaceAccessPolicy;
@@ -330,7 +287,8 @@ export function resolvePathAccess(
   options: ResolvePathAccessOptions,
 ): PathAccess {
   const pathClass = options.pathClass ?? DEFAULT_PATH_CLASS;
-  const normalizedPath = normalizeUserPath(path, pathClass);
+  const normalizedPath =
+    options.shellPathBridge?.fromShellPath(path) ?? normalizeUserPath(path, pathClass);
   const expandedPath = expandUserPath(normalizedPath, options.homeDir, pathClass);
   const rawIsAbsolute = pathe.isAbsolute(expandedPath);
   const canonical = canonicalizePath(expandedPath, cwd, pathClass);
@@ -377,6 +335,7 @@ export function resolvePathAccessPath(
     policy,
     pathClass: env.pathClass,
     homeDir: expandHome ? env.homeDir : undefined,
+    shellPathBridge: env.pathClass === 'win32' ? getShellPathBridge(env) : undefined,
   }).path;
 }
 
@@ -389,11 +348,6 @@ export interface AssertRealPathOptions {
   readonly checkSensitive?: boolean | undefined;
 }
 
-/**
- * Resolve the longest existing prefix of `abs` through symlinks and re-attach
- * the not-yet-existing tail. A write to a new file still gets its parent
- * directory resolved, which is where a redirect would sit.
- */
 async function realpathExistingPrefix(abs: string, fs: PathRealpathResolver): Promise<string> {
   const tail: string[] = [];
   let current = abs;
@@ -426,22 +380,6 @@ async function realWorkspaceRoots(
   return roots;
 }
 
-/**
- * Symlink-aware re-check, run at execution time.
- *
- * `resolvePathAccess` canonicalizes lexically, so a symlink that sits inside
- * the workspace still reads as inside it — while the OS follows the link at
- * open time. This re-runs the two checks against the resolved target:
- *
- *   - a path that looked inside the workspace must still be inside it once
- *     symlinks are resolved (a path the caller already gave as outside is
- *     governed by the approval layer, so it is left alone here);
- *   - the resolved target must not be a sensitive file, even when the link
- *     itself has an innocuous name.
- *
- * Costs nothing on the common path: when nothing along the path is a symlink
- * the resolved path equals the canonical one and this returns immediately.
- */
 export async function assertRealPathAccess(
   canonicalPath: string,
   rawPath: string,

@@ -7,15 +7,21 @@
  */
 
 import type { KlientContract } from './types.js';
-import { agentActivityViewContract } from './agent/activity.js';
-import { agentRpcContract } from './agent/rpc.js';
 import {
+  agentCommandContract,
+  agentContextMemoryContract,
   agentFullCompactionContract,
+  agentLoopContract,
   agentMcpContract,
+  agentPermissionModeContract,
   agentPlanContract,
+  agentRuntimeBindingContract,
   agentProfileContract,
+  agentPromptContract,
   agentShellCommandContract,
+  agentSkillContract,
   agentTaskContract,
+  agentTokenCountingContract,
   agentUsageContract,
 } from './agent/services.js';
 import { authContract, authSummaryContract } from './global/auth.js';
@@ -24,22 +30,23 @@ import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
 import { configContract } from './global/config.js';
 import { envContract } from './global/env.js';
+import { filesContract } from './global/files.js';
 import { flagsContract } from './global/flags.js';
 import { hostFsContract } from './global/hostFs.js';
 import { modelsContract } from './global/models.js';
+import { mcpManagementContract } from './global/mcpManagement.js';
 import { pluginsContract } from './global/plugins.js';
 import { providersContract } from './global/providers.js';
 import { sessionsContract } from './global/sessions.js';
 import { workspacesContract } from './global/workspaces.js';
 import { sessionApprovalContract } from './session/approval.js';
+import { sessionActivityViewContract } from './session/activity.js';
 import { sessionInteractionContract } from './session/interaction.js';
-import {
-  sessionLifecycleContract,
-  workspaceLifecycleContract,
-} from './session/lifecycle.js';
+import { sessionManagerContract } from './session/lifecycle.js';
 import { sessionMetadataContract } from './session/metadata.js';
 import { sessionQuestionContract } from './session/question.js';
 import { sessionSkillCatalogContract } from './session/skills.js';
+import { sessionTitleContract } from './session/title.js';
 
 export const globalContract: KlientContract = {
   // core (app scope)
@@ -57,18 +64,26 @@ export const globalContract: KlientContract = {
   capabilityService: capabilitiesContract,
   hostFolderBrowser: hostFsContract,
   bootstrapService: envContract,
-  // workspace scope (+ the app-registered handler registry)
-  workspaceLifecycleService: workspaceLifecycleContract,
-  sessionLifecycleService: sessionLifecycleContract,
+  fileService: filesContract,
+  mcpManagementService: mcpManagementContract,
+  sessionManager: sessionManagerContract,
   // session scope
   sessionMetadata: sessionMetadataContract,
   sessionInteractionService: sessionInteractionContract,
   sessionApprovalService: sessionApprovalContract,
   sessionQuestionService: sessionQuestionContract,
   sessionSkillCatalog: sessionSkillCatalogContract,
+  sessionTitleService: sessionTitleContract,
+  sessionActivityView: sessionActivityViewContract,
   // agent scope
-  agentRPCService: agentRpcContract,
-  agentActivityView: agentActivityViewContract,
+  agentPromptService: agentPromptContract,
+  agentSkillService: agentSkillContract,
+  agentLoopService: agentLoopContract,
+  agentPermissionModeService: agentPermissionModeContract,
+  agentCommandService: agentCommandContract,
+  agentRuntimeBindingService: agentRuntimeBindingContract,
+  agentContextMemoryService: agentContextMemoryContract,
+  agentTokenCountingService: agentTokenCountingContract,
   agentShellCommandService: agentShellCommandContract,
   agentProfileService: agentProfileContract,
   agentUsageService: agentUsageContract,

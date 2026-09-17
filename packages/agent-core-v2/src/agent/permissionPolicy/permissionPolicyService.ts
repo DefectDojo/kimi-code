@@ -1,17 +1,9 @@
-/**
- * `permissionPolicy` domain — `IAgentPermissionPolicyService` implementation.
- *
- * Runs the static, ordered permission chain: every node adjudicates the *risk*
- * of a tool call (mode posture, user rules, session approval memory, sensitive
- * paths, intrinsic tool risk, workspace write trust, fallback). Bound at
- * Agent scope.
- */
-
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
+import { DangerousCommandAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/dangerous-command-ask';
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import { FallbackAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/fallback-ask';
 import { GitControlPathAccessAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/git-control-path-access-ask';
@@ -43,19 +35,10 @@ export class AgentPermissionPolicyService
     @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
-    // Order matters: the first policy to return a result wins.
-    //
-    // `AutoModeApprove` sits after the content-sensitive asks (secrets on
-    // disk, the .git control directory, and files a later command executes)
-    // rather than ahead of them, so
-    // enabling auto mode speeds up ordinary work without also silently
-    // waiving the checks that exist for the highest-consequence paths.
-    // Everything else keeps its previous relative order: an explicit prior
-    // approval (`SessionApprovalHistory`) or a user `allow` rule still wins,
-    // so this does not re-prompt for something already approved.
     this.policies = [
       this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
+      this.instantiation.createInstance(DangerousCommandAskPermissionPolicyService),
       this.instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAllowPermissionPolicyService),

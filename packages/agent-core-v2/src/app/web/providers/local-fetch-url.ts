@@ -1,17 +1,3 @@
-/**
- * `web` domain — local `UrlFetcher` used when no managed fetch service
- * is configured. GETs URLs with a Chrome-like UA and SSRF hardening: http(s)
- * schemes only; unless `allowPrivateAddresses` is set, IP literals and
- * DNS-resolved addresses in loopback / RFC1918 / link-local / CGNAT / ULA
- * ranges are refused, including IPv4-mapped IPv6 forms; redirects are
- * followed manually with the same validation re-run on every hop; and each
- * request's connection is pinned to the DNS answers validation approved, so
- * a connect-time re-resolution cannot be rebound elsewhere (pinning is
- * skipped for IP literals and for requests a proxy will carry — NO_PROXY
- * bypasses still pin). Oversized bodies are refused; plain texts pass
- * through verbatim and HTML is reduced to its main text.
- */
-
 import { lookup as callbackLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
@@ -218,15 +204,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
   }
 }
 
-/**
- * NAT64 (RFC 6052) embeds an IPv4 address in the low 32 bits of the
- * well-known prefix 64:ff9b::/96. Those are ordinary IPv6 addresses that the
- * v4 rules do not cover, so on a NAT64 network they would translate straight
- * through to the embedded v4 target. Each private v4 range is mirrored into
- * NAT64 space (prefix 96 + the v4 prefix length); public v4 addresses reached
- * over NAT64 stay allowed. The local-use prefix 64:ff9b:1::/48 (RFC 8215) has
- * no fixed embedding offset, so it is blocked wholesale.
- */
 const PRIVATE_IPV4_SUBNETS: readonly (readonly [string, number])[] = [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],

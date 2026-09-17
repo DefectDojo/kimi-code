@@ -14,6 +14,12 @@ import {
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
+import {
+  createMarkdownOptions,
+  getMarkdownMermaidMode,
+  setMarkdownMermaidMode,
+  setMarkdownRenderLatex,
+} from '#/tui/utils/markdown-options';
 
 const tempDirs: string[] = [];
 const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
@@ -74,9 +80,11 @@ auto_install = false
 
     await handleReloadCommand(host);
 
-    expect(session.reloadSession).toHaveBeenCalledWith({
+    expect(host.harness.reloadSession).toHaveBeenCalledWith({
+      id: session.id,
       forcePluginSessionStartReminder: true,
     });
+    expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       session,
       'Session reloaded.',
@@ -116,6 +124,48 @@ auto_install = false
     expect(themeWhenTracked).toBe('auto');
   });
 
+  it('applies the render_latex toggle before theme application rebuilds Markdown', async () => {
+    await writeTuiConfig('render_latex = false\n');
+    const host = makeHost();
+
+    // applyTheme invalidates transcript components, which rebuild their
+    // Markdown children by copying the shared options — the reloaded value
+    // must already be live at that point.
+    let latexWhenThemeApplied: boolean | undefined;
+    const mutable = host as unknown as { applyTheme: unknown };
+    mutable.applyTheme = vi.fn(() => {
+      latexWhenThemeApplied = createMarkdownOptions().renderLatex;
+    });
+
+    try {
+      await handleReloadTuiCommand(host);
+      expect(latexWhenThemeApplied).toBe(false);
+    } finally {
+      setMarkdownRenderLatex(true);
+    }
+  });
+
+  it('applies the mermaid mode before theme application rebuilds Markdown', async () => {
+    await writeTuiConfig('[markdown]\nmermaid = "off"\n');
+    const host = makeHost();
+
+    let mermaidWhenThemeApplied: string | undefined;
+    const mutable = host as unknown as { applyTheme: unknown };
+    mutable.applyTheme = vi.fn(() => {
+      mermaidWhenThemeApplied = getMarkdownMermaidMode();
+    });
+
+    try {
+      await handleReloadTuiCommand(host);
+      expect(mermaidWhenThemeApplied).toBe('off');
+      expect(host.setAppState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdown: { mermaid: 'off' } }),
+      );
+    } finally {
+      setMarkdownMermaidMode('final');
+    }
+  });
+
   it('refreshes workspace commands and lazy defaults on a session-less v2 reload', async () => {
     await writeTuiConfig('theme = "dark"\n');
     const host = makeHost();
@@ -123,7 +173,6 @@ auto_install = false
     const refreshPluginCommands = vi.fn(async () => {});
     const hydrateLazyConfigDefaults = vi.fn(async () => {});
     Object.assign(host, {
-      engineV2: true,
       refreshSkillCommands,
       refreshPluginCommands,
       hydrateLazyConfigDefaults,
@@ -180,6 +229,7 @@ function makeHost({
     state,
     session,
     harness: {
+      reloadSession: vi.fn(async () => session),
       getConfig: vi.fn(async () => ({
         models: {
           fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
@@ -202,6 +252,7 @@ function makeHost({
     showStatus: vi.fn(),
   } as unknown as SlashCommandHost & {
     readonly harness: {
+      readonly reloadSession: ReturnType<typeof vi.fn>;
       readonly getConfig: ReturnType<typeof vi.fn>;
       readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };

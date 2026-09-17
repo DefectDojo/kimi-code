@@ -18,11 +18,6 @@ const SHA_RE = /^[0-9a-f]{7,40}$/;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
-/**
- * Plaintext to the local machine has no network path to tamper with, so it
- * stays allowed (local test servers, `pnpm dev:plugin-marketplace`). Plaintext
- * to anything else does not.
- */
 function isLoopbackUrl(raw: string): boolean {
   try {
     return LOOPBACK_HOSTS.has(new URL(raw).hostname.toLowerCase());
@@ -39,9 +34,6 @@ export function resolveInstallSource(source: string): ResolvedSource {
   if (github !== undefined) return github;
 
   if (trimmed.startsWith('http://') && !isLoopbackUrl(trimmed)) {
-    // A plugin archive is executable content: it can ship an mcpServers
-    // command that gets spawned. Over plaintext there is nothing binding the
-    // bytes to the publisher, so refuse rather than trust the network.
     throw new Error2(
       ErrorCodes.VALIDATION_FAILED,
       `Plugin source must use https (got "${trimmed}")`,
